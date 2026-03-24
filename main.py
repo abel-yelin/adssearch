@@ -183,17 +183,140 @@ class GoogleAdsTransparencyScraper:
         return domains
 
     async def _extract_advertiser_name_from_dom(self) -> str:
+        """Extract advertiser name from DOM with improved selector priority."""
+        # Priority order: most specific selectors first
+        selectors = [
+            '[class*="advertiser-name"]',
+            '[class*="advertiser"] [class*="name"]',
+            '[class*="header"] [class*="title"]',
+            'h1',
+            'h2',
+        ]
+        exclude_texts = {"Ads Transparency Center", "Advertiser Details", "Home", "FAQ", "Sign in"}
+
         try:
-            selectors = ['h1', 'h2', '[class*="advertiser-name"]', '[class*="header"] [class*="title"]']
             for sel in selectors:
                 elements = await self._page.query_selector_all(sel)
                 for el in elements:
                     text = (await el.inner_text()).strip()
-                    if text and len(text) < 200 and text not in ("Ads Transparency Center",):
-                        return text
+                    # Skip empty, too long, or excluded texts
+                    if text and 2 < len(text) < 200 and text not in exclude_texts:
+                        # Skip if it looks like a navigation item
+                        if not any(skip in text.lower() for skip in ["arrow", "keyboard", "calendar", "search"]):
+                            return text
         except Exception:
             pass
         return ""
+
+    async def _extract_creatives_from_dom(self, advertiser_id: str) -> list[AdCreative]:
+        """Extract ad creatives from DOM elements."""
+        creatives = []
+        seen_ids = set()
+
+        # Look for creative links in the page
+        creative_selectors = [
+            'a[href*="/creative/CR"]',
+            'a[href*="creative"][href*="AR"]',
+            '[class*="creative"] a',
+            '[class*="ad-card"] a',
+        ]
+
+        for sel in creative_selectors:
+            try:
+                elements = await self._page.query_selector_all(sel)
+                for el in elements:
+                    href = await el.get_attribute("href") or ""
+                    # Extract creative ID from URL
+                    cr_match = re.search(r'/creative/(CR\d+)', href)
+                    ar_match = re.search(r'/advertiser/(AR\d+)', href)
+
+                    if cr_match:
+                        cr_id = cr_match.group(1)
+                        if cr_id not in seen_ids:
+                            seen_ids.add(cr_id)
+                            # Try to extract target domain from link text or nearby elements
+                            text = (await el.inner_text()).strip()
+                            creatives.append(AdCreative(
+                                creative_id=cr_id,
+                                advertiser_id=ar_match.group(1) if ar_match else advertiser_id,
+                                target_domain=self._extract_domain_from_text(text),
+                            ))
+            except Exception:
+                pass
+
+        # Also search in page HTML for creative IDs
+        page_html = await self._page.content()
+        for match in re.finditer(r'/creative/(CR\d{15,25})', page_html):
+            cr_id = match.group(1)
+            if cr_id not in seen_ids:
+                seen_ids.add(cr_id)
+                creatives.append(AdCreative(
+                    creative_id=cr_id,
+                    advertiser_id=advertiser_id,
+                ))
+
+        return creatives
+
+    def _extract_domain_from_text(self, text: str) -> str:
+        """Extract a domain from text content."""
+        domain_pattern = r'(?:[\w-]+\.)+(?:com|net|org|io|ai|co|app|dev|xyz|info|biz|me|us|uk|de|fr|cn|jp|ru|edu|gov)(?:\.\w{2})?'
+        match = re.search(domain_pattern, text, re.I)
+        return match.group(0).lower() if match else ""
+
+    async def _extract_domains_from_creative_links(self, advertiser_id: str) -> set[str]:
+        """Navigate to creative detail pages to extract target domains."""
+        domains = set()
+
+        # Find all creative links
+        creative_links = await self._page.query_selector_all('a[href*="/creative/CR"]')
+        if not creative_links:
+            # Try alternative selectors
+            creative_links = await self._page.query_selector_all('a[href*="creative"]')
+
+        # Only check first few creatives to avoid too many navigations
+        for link in creative_links[:3]:
+            try:
+                href = await link.get_attribute("href") or ""
+                if "/creative/" in href:
+                    # Build full URL
+                    if href.startswith("/"):
+                        creative_url = f"{self.BASE_URL}{href}"
+                    else:
+                        creative_url = href
+
+                    # Navigate to creative page
+                    current_url = self._page.url
+                    await self._page.goto(creative_url, wait_until="networkidle", timeout=15000)
+                    await asyncio.sleep(2)
+
+                    # Extract domain from page content
+                    page_text = await self._page.inner_text("body")
+                    page_html = await self._page.content()
+
+                    # Look for target URL/domain patterns
+                    url_patterns = [
+                        r'https?://([^\s/"<>]+)',
+                        r'target[_-]?url["\s:=]+["\']?([^\s"\'<>]+)',
+                        r'landing[_-]?page["\s:=]+["\']?([^\s"\'<>]+)',
+                        r'destination[_-]?url["\s:=]+["\']?([^\s"\'<>]+)',
+                    ]
+
+                    for pattern in url_patterns:
+                        for match in re.finditer(pattern, page_html, re.I):
+                            domain = match.group(1).lower()
+                            # Clean up domain
+                            domain = re.sub(r'^www\.', '', domain)
+                            domain = domain.split('/')[0]
+                            if domain and not any(d in domain for d in ["google", "gstatic", "youtube"]):
+                                domains.add(domain)
+
+                    # Go back to advertiser page
+                    await self._page.goto(current_url, wait_until="networkidle", timeout=15000)
+                    await asyncio.sleep(1)
+            except Exception:
+                pass
+
+        return domains
 
     async def _scroll_to_load_all(self, max_pages=None):
         max_pages = max_pages or self.max_scroll_pages
@@ -281,8 +404,6 @@ class GoogleAdsTransparencyScraper:
         if not all_advertisers:
             return result
 
-        result.advertisers = [asdict(a) for a in all_advertisers]
-
         all_domains = set()
         all_creatives = []
         for adv in all_advertisers:
@@ -293,16 +414,39 @@ class GoogleAdsTransparencyScraper:
             except Exception:
                 pass
             await asyncio.sleep(5)
-            if not adv.name:
-                adv.name = await self._extract_advertiser_name_from_dom()
-            await self._scroll_to_load_all()
-            domains_from_api = self._parse_domains_from_intercepted()
-            creatives_from_api = self._parse_creatives_from_intercepted(adv.advertiser_id)
-            domains_from_dom = await self._extract_domains_from_dom()
-            adv_domains = domains_from_api | domains_from_dom
-            all_domains.update(adv_domains)
-            all_creatives.extend(creatives_from_api)
 
+            # Extract advertiser name if not already known or is placeholder
+            if not adv.name or adv.name == "Unknown":
+                adv.name = await self._extract_advertiser_name_from_dom()
+
+            # Scroll to load more content
+            await self._scroll_to_load_all()
+
+            # Extract domains from multiple sources
+            domains_from_api = self._parse_domains_from_intercepted()
+            domains_from_dom = await self._extract_domains_from_dom()
+            domains_from_creatives = await self._extract_domains_from_creative_links(adv.advertiser_id)
+
+            adv_domains = domains_from_api | domains_from_dom | domains_from_creatives
+            all_domains.update(adv_domains)
+
+            # Extract creatives from multiple sources
+            creatives_from_api = self._parse_creatives_from_intercepted(adv.advertiser_id)
+            creatives_from_dom = await self._extract_creatives_from_dom(adv.advertiser_id)
+
+            # Merge creatives, preferring ones with more info
+            seen_cr_ids = {c.creative_id for c in all_creatives}
+            for cr in creatives_from_api + creatives_from_dom:
+                if cr.creative_id not in seen_cr_ids:
+                    seen_cr_ids.add(cr.creative_id)
+                    cr.advertiser_name = adv.name
+                    all_creatives.append(cr)
+
+        # Add query domain to results if not already present
+        all_domains.add(domain.lower())
+
+        # Convert advertisers to dict AFTER names have been extracted
+        result.advertisers = [asdict(a) for a in all_advertisers]
         result.all_domains = sorted(all_domains)
         result.ad_creatives = [asdict(c) for c in all_creatives]
         result.total_ads_found = len(all_creatives)
