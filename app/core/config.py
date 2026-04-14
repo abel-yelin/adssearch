@@ -1,16 +1,62 @@
-from pydantic import BaseModel
+import os
+from functools import lru_cache
+
+from pydantic import BaseModel, Field
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_list_env(name: str, default: list[str]) -> list[str]:
+    value = os.getenv(name)
+    if not value:
+        return default
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _get_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 class AppSettings(BaseModel):
-    title: str = "Google Ads Transparency Scraper API"
-    description: str = "查询域名在 Google Ads Transparency Center 的广告主和关联域名"
-    version: str = "1.0.0"
-    api_prefix: str = "/api"
-    allow_origins: list[str] = ["*"]
-    allow_credentials: bool = True
-    allow_methods: list[str] = ["*"]
-    allow_headers: list[str] = ["*"]
+    app_name: str = Field(default="adssearch")
+    app_env: str = Field(default=os.getenv("APP_ENV", "development"))
+    debug: bool = Field(default_factory=lambda: _get_bool_env("APP_DEBUG", False))
+    title: str = Field(default="Google Ads Transparency Scraper API")
+    description: str = Field(default="查询域名在 Google Ads Transparency Center 的广告主和关联域名")
+    version: str = Field(default=os.getenv("APP_VERSION", "1.0.0"))
+    api_prefix: str = Field(default=os.getenv("API_PREFIX", "/api"))
+    docs_url: str | None = Field(default="/docs")
+    redoc_url: str | None = Field(default="/redoc")
+    openapi_url: str | None = Field(default="/openapi.json")
+    allow_origins: list[str] = Field(default_factory=lambda: _get_list_env("ALLOW_ORIGINS", ["*"]))
+    allow_credentials: bool = Field(default_factory=lambda: _get_bool_env("ALLOW_CREDENTIALS", True))
+    allow_methods: list[str] = Field(default_factory=lambda: _get_list_env("ALLOW_METHODS", ["*"]))
+    allow_headers: list[str] = Field(default_factory=lambda: _get_list_env("ALLOW_HEADERS", ["*"]))
+    log_level: str = Field(default=os.getenv("LOG_LEVEL", "INFO").upper())
+    default_region: str = Field(default=os.getenv("DEFAULT_REGION", "anywhere"))
+    default_timeout_ms: int = Field(default_factory=lambda: _get_int_env("DEFAULT_TIMEOUT_MS", 30000))
+    default_max_scroll_pages: int = Field(default_factory=lambda: _get_int_env("DEFAULT_MAX_SCROLL_PAGES", 10))
+    redis_url: str = Field(default=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    queue_name: str = Field(default=os.getenv("QUEUE_NAME", "adssearch"))
+    queue_job_timeout: int = Field(default_factory=lambda: _get_int_env("QUEUE_JOB_TIMEOUT", 1800))
+    queue_result_ttl: int = Field(default_factory=lambda: _get_int_env("QUEUE_RESULT_TTL", 86400))
 
 
-settings = AppSettings()
-
+@lru_cache(maxsize=1)
+def get_settings() -> AppSettings:
+    settings = AppSettings()
+    if settings.app_env.lower() == "production":
+        settings.docs_url = None
+        settings.redoc_url = None
+    return settings

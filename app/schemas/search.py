@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -11,9 +11,16 @@ class SearchRequest(BaseModel):
     timeout: int = Field(default=30000, ge=5000, le=120000, description="超时时间(ms)")
 
 
-class SearchResponse(BaseModel):
+class SearchTaskSubmitResponse(BaseModel):
     success: bool
     task_id: str
-    data: Optional[dict[str, Any]] = None
+    status: Literal["queued"]
+    message: str
+
+
+class SearchTaskStatusResponse(BaseModel):
+    success: bool
+    task_id: str
+    status: Literal["queued", "started", "finished", "failed", "deferred", "scheduled", "stopped", "canceled", "unknown"]
+    result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
-    duration_seconds: float = 0
