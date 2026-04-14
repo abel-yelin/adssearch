@@ -69,5 +69,24 @@ services:
       LOG_LEVEL: INFO
     command: ["python", "-m", "app.worker"]
 
+  sitemap-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: adssearch-sitemap-scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg2://adssearch:adssearch@postgres:5432/adssearch
+      APP_ENV: production
+      LOG_LEVEL: INFO
+      SITEMAP_SCHEDULER_POLL_SECONDS: 30
+    command: ["python", "-m", "app.sitemap_scheduler"]
+
 volumes:
   postgres_data:

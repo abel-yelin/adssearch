@@ -1,4 +1,4 @@
-from app.dependencies.services import get_task_service
+from app.dependencies.services import get_ads_task_service
 from app.schemas.search import SearchTaskStatusResponse, SearchTaskSubmitResponse, TaskActionResponse
 
 
@@ -54,7 +54,7 @@ class FakeTaskService:
 def test_search_endpoint(client):
     from app.main import app
 
-    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    app.dependency_overrides[get_ads_task_service] = lambda: FakeTaskService()
     try:
         response = client.post(
             "/api/search",
@@ -78,7 +78,7 @@ def test_search_endpoint(client):
 def test_task_status_endpoint(client):
     from app.main import app
 
-    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    app.dependency_overrides[get_ads_task_service] = lambda: FakeTaskService()
     try:
         response = client.get("/api/tasks/task-1234")
     finally:
@@ -96,7 +96,7 @@ def test_task_status_endpoint(client):
 def test_cancel_task_endpoint(client):
     from app.main import app
 
-    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    app.dependency_overrides[get_ads_task_service] = lambda: FakeTaskService()
     try:
         response = client.post("/api/tasks/task-1234/cancel")
     finally:
@@ -111,7 +111,7 @@ def test_cancel_task_endpoint(client):
 def test_retry_task_endpoint(client):
     from app.main import app
 
-    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    app.dependency_overrides[get_ads_task_service] = lambda: FakeTaskService()
     try:
         response = client.post("/api/tasks/task-1234/retry")
     finally:

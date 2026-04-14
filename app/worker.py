@@ -4,7 +4,7 @@ from redis import Redis
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
-from app.models import search_task  # noqa: F401
+from app import models  # noqa: F401
 from app.core.logging import configure_logging, get_logger
 
 

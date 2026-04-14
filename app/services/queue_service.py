@@ -1,3 +1,5 @@
+import json
+
 from rq.command import send_stop_job_command
 from redis import Redis
 from rq import Queue
@@ -43,3 +45,13 @@ class TaskQueueService:
 
     def stop_job(self, job_id: str) -> None:
         send_stop_job_command(self._redis, job_id)
+
+    def set_progress(self, task_id: str, payload: dict) -> None:
+        self._redis.set(
+            f"trend:task:{task_id}:progress",
+            json.dumps(payload, ensure_ascii=False),
+            ex=self.settings.queue_result_ttl,
+        )
+
+    def delete_progress(self, task_id: str) -> None:
+        self._redis.delete(f"trend:task:{task_id}:progress")

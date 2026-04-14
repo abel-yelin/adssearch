@@ -15,6 +15,12 @@ docker build -t ads-scraper-api .
 docker run -p 8000:8000 ads-scraper-api
 ```
 
+命令行快速测试任意域名广告投放：
+
+```bash
+.venv/bin/python scripts/check_ads_domain.py lovable.dev --max-scroll-pages 2 --pretty
+```
+
 ## API 端点
 
 ### 健康检查
@@ -40,6 +46,35 @@ Content-Type: application/json
 GET /api/tasks/{task_id}
 ```
 
+### Sitemap 监控
+```
+POST /api/sitemaps/monitors
+Content-Type: application/json
+
+{
+  "site_url": "https://example.com",
+  "sitemap_url": "https://example.com/sitemap_index.xml",
+  "interval_minutes": 5,
+  "enabled": true
+}
+```
+
+```
+GET /api/sitemaps/monitors
+GET /api/sitemaps/monitors/{monitor_id}
+POST /api/sitemaps/monitors/{monitor_id}/run
+GET /api/sitemaps/runs/{run_id}
+GET /api/sitemaps/monitors/{monitor_id}/recent-new-urls
+```
+
+Sitemap 监控支持：
+- 自动识别 `sitemap.xml` / `sitemap_index.xml`
+- 递归解析子 sitemap
+- 处理 `.xml.gz` sitemap
+- 优先使用 `ETag` / `Last-Modified` 做条件请求
+- 对比快照得到新增 URL、删除 URL、`lastmod` 变化 URL
+- 首次运行只建立基线，不把全量历史 URL 当作“新增”
+
 ### 取消任务
 ```
 POST /api/tasks/{task_id}/cancel
@@ -48,6 +83,45 @@ POST /api/tasks/{task_id}/cancel
 ### 重试任务
 ```
 POST /api/tasks/{task_id}/retry
+```
+
+### Google Trends 任务
+```
+POST /api/trends/tasks
+Content-Type: application/json
+
+{
+  "base_keyword": "openai",
+  "seed_keywords": ["chatgpt", "gpt-4"],
+  "time_range": "today 12-m",
+  "threshold": 20,
+  "max_keywords": 100,
+  "geo": "",
+  "language": "en-US",
+  "timezone_offset": 0,
+  "proxy": null
+}
+```
+
+查询状态：
+```
+GET /api/trends/tasks/{task_id}
+```
+
+查询摘要：
+```
+GET /api/trends/tasks/{task_id}/summary
+```
+
+导出结果：
+```
+GET /api/trends/tasks/{task_id}/export
+```
+
+取消与重试：
+```
+POST /api/trends/tasks/{task_id}/cancel
+POST /api/trends/tasks/{task_id}/retry
 ```
 
 ### 响应示例
@@ -196,6 +270,10 @@ QUEUE_RESULT_TTL=86400
 QUEUE_FAILURE_TTL=86400
 QUEUE_DEFAULT_RETRY_COUNT=1
 DATABASE_URL=postgresql+psycopg2://adssearch:adssearch@localhost:5432/adssearch
+SITEMAP_HTTP_TIMEOUT_SECONDS=30
+SITEMAP_MAX_FILES=2000
+SITEMAP_SCHEDULER_POLL_SECONDS=30
+SITEMAP_SCHEDULER_BATCH_SIZE=20
 ```
 
 如果你要传代理或其他敏感值，建议在部署平台或本机 shell 里注入，不要写入仓库。
@@ -204,6 +282,12 @@ DATABASE_URL=postgresql+psycopg2://adssearch:adssearch@localhost:5432/adssearch
 
 ```bash
 pytest -q
+```
+
+只验证 Google Trends 相关功能时，可以跑：
+
+```bash
+.venv/bin/python -m pytest tests/test_trends_collector.py tests/test_trend_tasks.py -q
 ```
 
 ## 异步运行
@@ -221,6 +305,36 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 python -m app.worker
 ```
 
+4. 启动 Sitemap Scheduler：
+
+```bash
+python -m app.sitemap_scheduler
+```
+
+## Google Trends 功能落地
+
+### 直接验证采集器
+
+这条命令会直接用 Playwright 访问 Google Trends，不经过 API 和队列：
+
+```bash
+.venv/bin/python scripts/check_trends_collector.py --base-keyword openai --keywords chatgpt gpt-4
+```
+
+### 通过 API 提交并轮询任务
+
+先启动 API、Worker、Redis，再执行：
+
+```bash
+.venv/bin/python scripts/run_trend_task_demo.py --base-keyword openai --seed-keywords chatgpt gpt-4
+```
+
+### 常见问题
+
+- 如果返回 `captcha_or_blocked` 或 `HTTP 429`，说明当前机器或代理 IP 被 Google Trends 限流。
+- 采集器现在会明确识别 `429/403/captcha`，不会再把这类问题误报成普通超时。
+- 真实环境建议配置稳定代理，并降低访问频率，否则很容易被 Google Trends 风控。
+
 ## Docker Compose
 
 ```bash
@@ -232,6 +346,7 @@ docker compose up --build
 - Redis: `localhost:6379`
 - PostgreSQL: `localhost:5432`
 - Worker: 在 Compose 内部自动启动
+- Sitemap Scheduler: 在 Compose 内部自动启动
 
 默认 PostgreSQL 连接：
 

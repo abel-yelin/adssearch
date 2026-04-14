@@ -1,9 +1,10 @@
 import asyncio
+import html
 import json
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from playwright.async_api import BrowserContext, Page, Response, async_playwright
 
@@ -99,17 +100,18 @@ class GoogleAdsTransparencyScraper:
         self.region = region
         self.max_scroll_pages = max_scroll_pages
         self.timeout = timeout
+        self._playwright = None
         self._browser = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._intercepted_responses: list[dict] = []
 
     async def start(self):
-        pw = await async_playwright().start()
+        self._playwright = await async_playwright().start()
         launch_opts = {"headless": self.headless}
         if self.proxy:
             launch_opts["proxy"] = {"server": self.proxy}
-        self._browser = await pw.chromium.launch(**launch_opts)
+        self._browser = await self._playwright.chromium.launch(**launch_opts)
         self._context = await self._browser.new_context(
             viewport={"width": 1440, "height": 900},
             user_agent=(
@@ -123,8 +125,15 @@ class GoogleAdsTransparencyScraper:
         self._page.on("response", self._on_response)
 
     async def close(self):
+        if self._context:
+            await self._context.close()
+            self._context = None
         if self._browser:
             await self._browser.close()
+            self._browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
 
     async def _on_response(self, response: Response):
         if "batchexecute" not in response.url and "TransparencyReport" not in response.url:
@@ -226,6 +235,7 @@ class GoogleAdsTransparencyScraper:
 
     async def _extract_advertiser_name_from_dom(self) -> str:
         selectors = [
+            '[aria-label*="Legal name"]',
             '[class*="advertiser-name"]',
             '[class*="advertiser"] [class*="name"]',
             '[class*="header"] [class*="title"]',
@@ -245,9 +255,20 @@ class GoogleAdsTransparencyScraper:
                         continue
                     if any(skip in text.lower() for skip in ["arrow", "keyboard", "calendar", "search"]):
                         continue
+                    if "Legal name:" in text:
+                        text = text.split("Legal name:", 1)[1].split("\n", 1)[0].strip()
+                    if "\n" in text and len(text.splitlines()[0].strip()) > 2:
+                        text = text.splitlines()[0].strip()
                     return text
         except Exception:
             pass
+        body_text = await self._page.text_content("body") or ""
+        match = re.search(r"Legal name:\s*([^\n]+)", body_text, re.I)
+        if match:
+            return match.group(1).strip()
+        match = re.search(r"keyboard_arrow_right\s*([^\n]+)", body_text)
+        if match:
+            return match.group(1).strip()
         return ""
 
     async def _extract_creatives_from_dom(self, advertiser_id: str) -> list[AdCreative]:
@@ -274,11 +295,13 @@ class GoogleAdsTransparencyScraper:
                         continue
                     seen_ids.add(cr_id)
                     text = (await element.inner_text()).strip()
+                    outer_html = await element.evaluate("(node) => node.outerHTML")
                     creatives.append(
                         AdCreative(
                             creative_id=cr_id,
                             advertiser_id=ar_match.group(1) if ar_match else advertiser_id,
                             target_domain=self._extract_domain_from_text(text),
+                            format=self._infer_creative_format(text, outer_html),
                         )
                     )
             except Exception:
@@ -290,7 +313,13 @@ class GoogleAdsTransparencyScraper:
             if cr_id in seen_ids:
                 continue
             seen_ids.add(cr_id)
-            creatives.append(AdCreative(creative_id=cr_id, advertiser_id=advertiser_id))
+            creatives.append(
+                AdCreative(
+                    creative_id=cr_id,
+                    advertiser_id=advertiser_id,
+                    format=self._infer_creative_format("", page_html, creative_id=cr_id),
+                )
+            )
 
         return creatives
 
@@ -309,7 +338,10 @@ class GoogleAdsTransparencyScraper:
         if "://" not in value:
             value = f"//{value}"
 
-        parsed = urlparse(value)
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            return ""
         host = (parsed.hostname or "").strip(".").lower()
         if not host or host == "localhost":
             return ""
@@ -351,6 +383,13 @@ class GoogleAdsTransparencyScraper:
 
     def _extract_contextual_domains(self, text: str) -> set[str]:
         domains = set()
+        expanded_text = html.unescape(text or "")
+        expanded_text = (
+            expanded_text.replace("\\u0026", "&")
+            .replace("\\x26", "&")
+            .replace("\\x3d", "=")
+            .replace("\\/", "/")
+        )
         patterns = [
             r'target[_-]?(?:url|domain|page)["\s:=]+["\']?([^\s"\'<>]+)',
             r'landing[_-]?(?:url|domain|page)["\s:=]+["\']?([^\s"\'<>]+)',
@@ -358,16 +397,31 @@ class GoogleAdsTransparencyScraper:
             r'display[_-]?(?:url|domain)["\s:=]+["\']?([^\s"\'<>]+)',
             r'final[_-]?(?:url|domain)["\s:=]+["\']?([^\s"\'<>]+)',
             r'"(https?://[^"<>]+)"',
+            r"(https?://[^\s'\"<>]+)",
+            r"adurl=([^&\\\"'\\s>]+)",
         ]
         for pattern in patterns:
-            for match in re.finditer(pattern, text or "", re.I):
-                domain = self._normalize_domain(match.group(1))
+            for match in re.finditer(pattern, expanded_text, re.I):
+                raw_value = unquote(match.group(1))
+                domain = self._normalize_domain(raw_value)
+                if domain:
+                    domains.add(domain)
+
+        for url_match in re.finditer(r"https?://[^\s'\"<>]+", expanded_text, re.I):
+            url = url_match.group(0)
+            try:
+                parsed = urlparse(url)
+            except ValueError:
+                continue
+            adurl_values = parse_qs(parsed.query).get("adurl") or []
+            for raw_value in adurl_values:
+                domain = self._normalize_domain(unquote(raw_value))
                 if domain:
                     domains.add(domain)
         return domains
 
-    async def _extract_domains_from_creative_links(self, advertiser_id: str) -> set[str]:
-        domains = set()
+    async def _extract_creative_details_from_links(self, advertiser_id: str) -> dict[str, dict[str, str]]:
+        details: dict[str, dict[str, str]] = {}
         creative_links = await self._page.query_selector_all('a[href*="/creative/CR"]')
         if not creative_links:
             creative_links = await self._page.query_selector_all('a[href*="creative"]')
@@ -377,30 +431,33 @@ class GoogleAdsTransparencyScraper:
                 href = await link.get_attribute("href") or ""
                 if "/creative/" not in href:
                     continue
+                creative_match = re.search(r"/creative/(CR\d+)", href)
+                if not creative_match:
+                    continue
+                creative_id = creative_match.group(1)
+                link_text = (await link.inner_text()).strip()
+                outer_html = await link.evaluate("(node) => node.outerHTML")
 
                 creative_url = f"{self.BASE_URL}{href}" if href.startswith("/") else href
-                current_url = self._page.url
-                await self._page.goto(creative_url, wait_until="networkidle", timeout=15000)
-                await asyncio.sleep(2)
-                page_html = await self._page.content()
-
-                for pattern in [
-                    r'https?://([^\s/"<>]+)',
-                    r'target[_-]?url["\s:=]+["\']?([^\s"\'<>]+)',
-                    r'landing[_-]?page["\s:=]+["\']?([^\s"\'<>]+)',
-                    r'destination[_-]?url["\s:=]+["\']?([^\s"\'<>]+)',
-                ]:
-                    for match in re.finditer(pattern, page_html, re.I):
-                        domain = self._normalize_domain(match.group(1))
-                        if domain:
-                            domains.add(domain)
-
-                await self._page.goto(current_url, wait_until="networkidle", timeout=15000)
-                await asyncio.sleep(1)
+                detail_page = await self._context.new_page()
+                detail_page.set_default_timeout(15000)
+                try:
+                    await detail_page.goto(creative_url, wait_until="domcontentloaded", timeout=15000)
+                    await asyncio.sleep(2)
+                    page_html = await detail_page.content()
+                    body_text = await detail_page.text_content("body") or ""
+                    detail_domains = self._extract_contextual_domains(page_html) | self._extract_contextual_domains(body_text)
+                    target_domain = sorted(detail_domains)[0] if detail_domains else ""
+                    details[creative_id] = {
+                        "target_domain": target_domain,
+                        "format": self._infer_creative_format(link_text, f"{outer_html}\n{page_html}", creative_id=creative_id),
+                    }
+                finally:
+                    await detail_page.close()
             except Exception:
                 pass
 
-        return domains
+        return details
 
     async def _scroll_to_load_all(self, max_pages=None):
         max_pages = max_pages or self.max_scroll_pages
@@ -466,6 +523,18 @@ class GoogleAdsTransparencyScraper:
                 creatives.append(AdCreative(creative_id=cr_id, advertiser_id=advertiser_id))
         return creatives
 
+    def _infer_creative_format(self, text: str, html_content: str, creative_id: str | None = None) -> str:
+        haystack = f"{text}\n{html_content}".lower()
+        if "videocam" in haystack or "youtube" in haystack or "hqdefault.jpg" in haystack:
+            return "video"
+        if "wide" in haystack:
+            return "image_wide"
+        if creative_id and re.search(rf"/creative/{re.escape(creative_id)}.*?grey-background(?![^>]*wide)", haystack, re.S):
+            return "image"
+        if "creative-bounding-box" in haystack:
+            return "image"
+        return ""
+
     async def search_domain(self, domain: str) -> ScrapeResult:
         normalized_query_domain = self._normalize_domain(domain) or domain.lower()
         result = ScrapeResult(query_domain=normalized_query_domain)
@@ -473,10 +542,10 @@ class GoogleAdsTransparencyScraper:
         self._intercepted_responses.clear()
 
         try:
-            await self._page.goto(search_url, wait_until="networkidle", timeout=self.timeout)
+            await self._page.goto(search_url, wait_until="domcontentloaded", timeout=self.timeout)
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
 
         advertisers_from_api = self._parse_advertiser_from_intercepted()
         advertisers_from_dom = await self._extract_advertiser_from_dom()
@@ -500,10 +569,10 @@ class GoogleAdsTransparencyScraper:
             )
             self._intercepted_responses.clear()
             try:
-                await self._page.goto(advertiser_url, wait_until="networkidle", timeout=self.timeout)
+                await self._page.goto(advertiser_url, wait_until="domcontentloaded", timeout=self.timeout)
             except Exception:
                 pass
-            await asyncio.sleep(5)
+            await asyncio.sleep(4)
 
             if not advertiser.name or advertiser.name == "Unknown":
                 advertiser.name = await self._extract_advertiser_name_from_dom()
@@ -512,9 +581,12 @@ class GoogleAdsTransparencyScraper:
 
             domains_from_api = self._parse_domains_from_intercepted()
             domains_from_dom = await self._extract_domains_from_dom()
-            domains_from_creatives = await self._extract_domains_from_creative_links(
-                advertiser.advertiser_id
-            )
+            creative_details = await self._extract_creative_details_from_links(advertiser.advertiser_id)
+            domains_from_creatives = {
+                item["target_domain"]
+                for item in creative_details.values()
+                if item.get("target_domain")
+            }
 
             advertiser_domains = domains_from_api | domains_from_dom | domains_from_creatives
             domain_sources = {
@@ -553,6 +625,12 @@ class GoogleAdsTransparencyScraper:
                     continue
                 seen_creative_ids.add(creative.creative_id)
                 creative.advertiser_name = advertiser.name
+                if creative.creative_id in creative_details:
+                    detail = creative_details[creative.creative_id]
+                    if detail.get("target_domain"):
+                        creative.target_domain = detail["target_domain"]
+                    if detail.get("format"):
+                        creative.format = detail["format"]
                 all_creatives.append(creative)
 
         all_domains.add(normalized_query_domain)

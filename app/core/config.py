@@ -54,6 +54,10 @@ class AppSettings(BaseModel):
     queue_failure_ttl: int = Field(default_factory=lambda: _get_int_env("QUEUE_FAILURE_TTL", 86400))
     queue_default_retry_count: int = Field(default_factory=lambda: _get_int_env("QUEUE_DEFAULT_RETRY_COUNT", 1))
     database_url: str = Field(default=os.getenv("DATABASE_URL", "sqlite:///./adssearch.db"))
+    sitemap_http_timeout_seconds: int = Field(default_factory=lambda: _get_int_env("SITEMAP_HTTP_TIMEOUT_SECONDS", 30))
+    sitemap_max_files: int = Field(default_factory=lambda: _get_int_env("SITEMAP_MAX_FILES", 2000))
+    sitemap_scheduler_poll_seconds: int = Field(default_factory=lambda: _get_int_env("SITEMAP_SCHEDULER_POLL_SECONDS", 30))
+    sitemap_scheduler_batch_size: int = Field(default_factory=lambda: _get_int_env("SITEMAP_SCHEDULER_BATCH_SIZE", 20))
 
 
 @lru_cache(maxsize=1)
