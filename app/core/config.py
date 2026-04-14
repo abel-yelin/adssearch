@@ -54,6 +54,23 @@ class AppSettings(BaseModel):
     queue_failure_ttl: int = Field(default_factory=lambda: _get_int_env("QUEUE_FAILURE_TTL", 86400))
     queue_default_retry_count: int = Field(default_factory=lambda: _get_int_env("QUEUE_DEFAULT_RETRY_COUNT", 1))
     database_url: str = Field(default=os.getenv("DATABASE_URL", "sqlite:///./adssearch.db"))
+    trend_default_proxy: str | None = Field(
+        default=os.getenv("TRENDS_PROXY")
+        or os.getenv("ALL_PROXY")
+        or os.getenv("all_proxy")
+        or os.getenv("HTTPS_PROXY")
+        or os.getenv("https_proxy")
+        or os.getenv("HTTP_PROXY")
+        or os.getenv("http_proxy")
+    )
+    trend_batch_delay_min_seconds: int = Field(default_factory=lambda: _get_int_env("TREND_BATCH_DELAY_MIN_SECONDS", 4))
+    trend_batch_delay_max_seconds: int = Field(default_factory=lambda: _get_int_env("TREND_BATCH_DELAY_MAX_SECONDS", 9))
+    trend_block_cooldown_base_seconds: int = Field(
+        default_factory=lambda: _get_int_env("TREND_BLOCK_COOLDOWN_BASE_SECONDS", 20)
+    )
+    trend_block_cooldown_max_seconds: int = Field(
+        default_factory=lambda: _get_int_env("TREND_BLOCK_COOLDOWN_MAX_SECONDS", 90)
+    )
     sitemap_http_timeout_seconds: int = Field(default_factory=lambda: _get_int_env("SITEMAP_HTTP_TIMEOUT_SECONDS", 30))
     sitemap_max_files: int = Field(default_factory=lambda: _get_int_env("SITEMAP_MAX_FILES", 2000))
     sitemap_scheduler_poll_seconds: int = Field(default_factory=lambda: _get_int_env("SITEMAP_SCHEDULER_POLL_SECONDS", 30))

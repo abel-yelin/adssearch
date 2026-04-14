@@ -11,7 +11,7 @@ from app.schemas.task import TrendTaskCreateRequest
 from app.services.keyword_service import KeywordService
 from app.services.queue_service import TaskQueueService
 from app.utils.keyword_filters import normalize_keyword
-from app.utils.retry import get_backoff_seconds
+from app.utils.retry import get_backoff_seconds, get_block_cooldown_seconds, get_jitter_delay_seconds
 
 
 logger = get_logger(__name__)
@@ -31,9 +31,11 @@ def run_trend_task(payload: dict) -> dict:
 
 
 async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict:
-    collector = GoogleTrendsCollector(proxy=request.proxy, language=request.language)
+    settings = get_settings()
+    resolved_proxy = request.proxy or settings.trend_default_proxy
+    collector = GoogleTrendsCollector(proxy=resolved_proxy, language=request.language)
     keyword_service = KeywordService()
-    queue_service = TaskQueueService(get_settings())
+    queue_service = TaskQueueService(settings)
 
     with get_db_session() as session:
         TrendTaskRepository(session).set_task_status(task_id, "running", started=True)
@@ -85,6 +87,14 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
             capture_result = None
             while retry_count < 3:
                 try:
+                    if retry_count == 0:
+                        await _sleep_before_batch(
+                            queue_service=queue_service,
+                            task_id=task_id,
+                            batch_no=batch_no,
+                            min_seconds=settings.trend_batch_delay_min_seconds,
+                            max_seconds=settings.trend_batch_delay_max_seconds,
+                        )
                     capture_result = await collector.capture(
                         base_keyword=request.base_keyword,
                         keywords=batch_keywords,
@@ -95,18 +105,19 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                     break
                 except TrendsCollectorError as exc:
                     retry_count += 1
+                    retry_status = "cooldown" if exc.code == "captcha_or_blocked" and retry_count < 3 else "retrying"
                     with get_db_session() as session:
                         repo = TrendTaskRepository(session)
                         repo.update_batch_status(
                             batch.id,
-                            "retrying" if retry_count < 3 else "failed",
+                            retry_status if retry_count < 3 else "failed",
                             retry_count=retry_count,
                             error_code=exc.code,
                             error_message=exc.message,
                         )
                         repo.set_task_status(
                             task_id,
-                            "retrying" if retry_count < 3 else "failed",
+                            retry_status if retry_count < 3 else "failed",
                             error_code=exc.code,
                             error_message=exc.message,
                             increment_retry=True,
@@ -118,7 +129,29 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                             repo.set_task_status(task_id, "failed", error_code=exc.code, error_message=exc.message, result_payload=result, finished=True)
                             queue_service.set_progress(task_id, result)
                             return result
-                    await asyncio.sleep(get_backoff_seconds(retry_count))
+                    delay_seconds = (
+                        get_block_cooldown_seconds(
+                            retry_count,
+                            base_delay=settings.trend_block_cooldown_base_seconds,
+                            max_delay=settings.trend_block_cooldown_max_seconds,
+                        )
+                        if exc.code == "captcha_or_blocked"
+                        else get_backoff_seconds(retry_count)
+                    )
+                    queue_service.set_progress(
+                        task_id,
+                        {
+                            "status": retry_status if retry_count < 3 else "failed",
+                            "current_batch_no": batch_no,
+                            "current_keywords": batch_keywords,
+                            "retry_count": retry_count,
+                            "retry_in_seconds": delay_seconds,
+                            "error_code": exc.code,
+                            "error_message": exc.message,
+                            "proxy": resolved_proxy,
+                        },
+                    )
+                    await asyncio.sleep(delay_seconds)
 
             if capture_result is None:
                 raise RuntimeError("Capture result missing after retry loop.")
@@ -195,3 +228,24 @@ def _build_result(repo: TrendTaskRepository, task_id: str, status: str) -> dict:
             for item in effective_keywords
         ],
     }
+
+
+async def _sleep_before_batch(
+    *,
+    queue_service: TaskQueueService,
+    task_id: str,
+    batch_no: int,
+    min_seconds: float,
+    max_seconds: float,
+) -> None:
+    delay_seconds = get_jitter_delay_seconds(min_seconds, max_seconds)
+    queue_service.set_progress(
+        task_id,
+        {
+            "status": "cooldown",
+            "current_batch_no": batch_no,
+            "retry_in_seconds": delay_seconds,
+            "message": "Waiting before the next Google Trends batch to reduce rate-limit risk.",
+        },
+    )
+    await asyncio.sleep(delay_seconds)

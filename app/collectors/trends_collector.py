@@ -30,6 +30,11 @@ class _CaptureState:
 
 class GoogleTrendsCollector:
     BASE_URL = "https://trends.google.com/trends/explore"
+    DEFAULT_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    )
 
     def __init__(
         self,
@@ -59,7 +64,27 @@ class GoogleTrendsCollector:
         if self.proxy:
             launch_kwargs["proxy"] = {"server": self.proxy}
         self._browser = await self._playwright.chromium.launch(**launch_kwargs)
-        self._context = await self._browser.new_context(locale=self.language, timezone_id="UTC")
+        self._context = await self._browser.new_context(
+            locale=self.language,
+            timezone_id="UTC",
+            user_agent=self.DEFAULT_USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+            screen={"width": 1440, "height": 900},
+        )
+        await self._context.set_extra_http_headers(
+            {
+                "Accept-Language": f"{self.language},en;q=0.9",
+                "Upgrade-Insecure-Requests": "1",
+            }
+        )
+        await self._context.add_init_script(
+            """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4] });
+            """
+        )
         self._page = await self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
         self._page.on("response", self._on_response)

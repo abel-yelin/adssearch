@@ -270,6 +270,11 @@ QUEUE_RESULT_TTL=86400
 QUEUE_FAILURE_TTL=86400
 QUEUE_DEFAULT_RETRY_COUNT=1
 DATABASE_URL=postgresql+psycopg2://adssearch:adssearch@localhost:5432/adssearch
+TRENDS_PROXY=
+TREND_BATCH_DELAY_MIN_SECONDS=4
+TREND_BATCH_DELAY_MAX_SECONDS=9
+TREND_BLOCK_COOLDOWN_BASE_SECONDS=20
+TREND_BLOCK_COOLDOWN_MAX_SECONDS=90
 SITEMAP_HTTP_TIMEOUT_SECONDS=30
 SITEMAP_MAX_FILES=2000
 SITEMAP_SCHEDULER_POLL_SECONDS=30
@@ -333,6 +338,8 @@ python -m app.sitemap_scheduler
 
 - 如果返回 `captcha_or_blocked` 或 `HTTP 429`，说明当前机器或代理 IP 被 Google Trends 限流。
 - 采集器现在会明确识别 `429/403/captcha`，不会再把这类问题误报成普通超时。
+- 如果请求体里没传 `proxy`，系统会自动尝试 `TRENDS_PROXY`，其次读取 `ALL_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY`。
+- 任务执行时会在批次之间自动随机等待，并在遇到 `captcha_or_blocked` 时进入更长冷却后再重试。
 - 真实环境建议配置稳定代理，并降低访问频率，否则很容易被 Google Trends 风控。
 
 ## Docker Compose

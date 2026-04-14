@@ -1,7 +1,9 @@
 import asyncio
+import codecs
 import html
 import json
 import re
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -327,6 +329,17 @@ class GoogleAdsTransparencyScraper:
         match = self.DOMAIN_PATTERN.search(text)
         return self._normalize_domain(match.group(0)) if match else ""
 
+    @staticmethod
+    def _decode_js_escaped_text(value: str) -> str:
+        if not value:
+            return ""
+        decoded = value.replace("\\/", "/")
+        try:
+            decoded = codecs.decode(decoded, "unicode_escape")
+        except Exception:
+            decoded = html.unescape(decoded)
+        return html.unescape(decoded)
+
     def _normalize_domain(self, raw_value: str) -> str:
         if not raw_value:
             return ""
@@ -420,6 +433,64 @@ class GoogleAdsTransparencyScraper:
                     domains.add(domain)
         return domains
 
+    def _extract_preview_script_urls(self, script_urls: list[str]) -> list[str]:
+        preview_urls: list[str] = []
+        for script_url in script_urls:
+            if "displayads-formats.googleusercontent.com/ads/preview/content.js" not in script_url:
+                continue
+            normalized = html.unescape(script_url)
+            if normalized not in preview_urls:
+                preview_urls.append(normalized)
+        return preview_urls
+
+    def _fetch_preview_metadata(self, preview_url: str) -> dict[str, str]:
+        try:
+            with urllib.request.urlopen(preview_url, timeout=20) as response:
+                body = response.read().decode("utf-8", "ignore")
+        except Exception:
+            return {}
+
+        metadata: dict[str, str] = {}
+        for field in ("destination_url", "visible_url", "redirect_url", "final_url", "google_click_url"):
+            match = re.search(rf"{field}:\s*\\x27(.*?)\\x27", body, re.S)
+            if match:
+                metadata[field] = self._decode_js_escaped_text(match.group(1))
+
+        layout_match = re.search(r"layout\\x27:\s*\\x27(.*?)\\x27", body)
+        if layout_match:
+            metadata["layout"] = self._decode_js_escaped_text(layout_match.group(1))
+
+        if "\\x27video\\x27:" in body or "hqdefault.jpg" in body:
+            metadata["has_video"] = "true"
+
+        return metadata
+
+    def _resolve_creative_target_domain(self, metadata: dict[str, str]) -> str:
+        candidates = [
+            metadata.get("destination_url", ""),
+            metadata.get("final_url", ""),
+            metadata.get("redirect_url", ""),
+            metadata.get("google_click_url", ""),
+            metadata.get("visible_url", ""),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            domain = self._normalize_domain(candidate)
+            if domain:
+                return domain
+
+            try:
+                parsed = urlparse(candidate)
+            except ValueError:
+                continue
+            adurl_values = parse_qs(parsed.query).get("adurl") or []
+            for adurl in adurl_values:
+                domain = self._normalize_domain(unquote(adurl))
+                if domain:
+                    return domain
+        return ""
+
     async def _extract_creative_details_from_links(self, advertiser_id: str) -> dict[str, dict[str, str]]:
         details: dict[str, dict[str, str]] = {}
         creative_links = await self._page.query_selector_all('a[href*="/creative/CR"]')
@@ -446,11 +517,27 @@ class GoogleAdsTransparencyScraper:
                     await asyncio.sleep(2)
                     page_html = await detail_page.content()
                     body_text = await detail_page.text_content("body") or ""
+                    script_urls = await detail_page.eval_on_selector_all("script[src]", "els => els.map(e => e.src)")
+                    preview_urls = self._extract_preview_script_urls(script_urls)
+                    preview_metadata = {}
+                    for preview_url in preview_urls:
+                        preview_metadata = self._fetch_preview_metadata(preview_url)
+                        if preview_metadata:
+                            break
                     detail_domains = self._extract_contextual_domains(page_html) | self._extract_contextual_domains(body_text)
-                    target_domain = sorted(detail_domains)[0] if detail_domains else ""
+                    target_domain = self._resolve_creative_target_domain(preview_metadata)
+                    if not target_domain and detail_domains:
+                        target_domain = sorted(detail_domains)[0]
+                    creative_format = ""
+                    if preview_metadata.get("has_video") == "true":
+                        creative_format = "video"
+                    elif preview_metadata.get("layout") == "discover":
+                        creative_format = "video"
+                    if not creative_format:
+                        creative_format = self._infer_creative_format(link_text, f"{outer_html}\n{page_html}", creative_id=creative_id)
                     details[creative_id] = {
                         "target_domain": target_domain,
-                        "format": self._infer_creative_format(link_text, f"{outer_html}\n{page_html}", creative_id=creative_id),
+                        "format": creative_format,
                     }
                 finally:
                     await detail_page.close()
