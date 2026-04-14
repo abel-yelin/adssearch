@@ -11,8 +11,8 @@ logger = get_logger(__name__)
 
 
 class SearchService:
-    async def run_search(self, request: SearchRequest, settings: AppSettings) -> dict:
-        task_id = str(uuid.uuid4())[:8]
+    async def run_search(self, request: SearchRequest, settings: AppSettings, task_id: str | None = None) -> dict:
+        task_id = task_id or str(uuid.uuid4())[:8]
         start_time = asyncio.get_event_loop().time()
         scraper = GoogleAdsTransparencyScraper(
             headless=True,

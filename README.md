@@ -40,6 +40,16 @@ Content-Type: application/json
 GET /api/tasks/{task_id}
 ```
 
+### 取消任务
+```
+POST /api/tasks/{task_id}/cancel
+```
+
+### 重试任务
+```
+POST /api/tasks/{task_id}/retry
+```
+
 ### 响应示例
 ```json
 {
@@ -80,7 +90,8 @@ GET /api/tasks/{task_id}
       "total_ads_found": 0
     },
     "duration_seconds": 45.32
-  }
+  },
+  "retries_left": 1
 }
 ```
 
@@ -108,7 +119,10 @@ app/
   core/exceptions.py
   core/logging.py
   core/middleware.py
+  db/session.py
+  models/search_task.py
   dependencies/services.py
+  repositories/task_repository.py
   schemas/
     health.py
     search.py
@@ -124,6 +138,7 @@ tests/
   conftest.py
   test_health.py
   test_search.py
+docker-compose.yml
 ```
 
 - `app/main.py` 负责创建 FastAPI 应用
@@ -131,9 +146,12 @@ tests/
 - `app/core/logging.py` 放日志配置
 - `app/core/middleware.py` 处理请求 ID 和请求日志
 - `app/core/exceptions.py` 注册统一异常处理
+- `app/db/` 管理数据库连接和会话
+- `app/models/` 放持久化模型
 - `app/api/router.py` 统一注册 API 路由
 - `app/api/routes/` 放接口路由
 - `app/dependencies/` 放依赖注入入口
+- `app/repositories/` 负责数据库读写
 - `app/schemas/` 放请求和响应模型
 - `app/services/queue_service.py` 管理 Redis/RQ 队列连接
 - `app/services/search_service.py` 放接口业务编排
@@ -142,6 +160,7 @@ tests/
 - `app/tasks/search_tasks.py` 是 worker 实际执行的任务函数
 - `app/worker.py` 是队列 worker 启动入口
 - `tests/` 放基础接口测试
+- `docker-compose.yml` 用于一键启动 api、worker、redis
 
 ## 新入口
 
@@ -174,6 +193,9 @@ REDIS_URL=redis://localhost:6379/0
 QUEUE_NAME=adssearch
 QUEUE_JOB_TIMEOUT=1800
 QUEUE_RESULT_TTL=86400
+QUEUE_FAILURE_TTL=86400
+QUEUE_DEFAULT_RETRY_COUNT=1
+DATABASE_URL=postgresql+psycopg2://adssearch:adssearch@localhost:5432/adssearch
 ```
 
 如果你要传代理或其他敏感值，建议在部署平台或本机 shell 里注入，不要写入仓库。
@@ -198,3 +220,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```bash
 python -m app.worker
 ```
+
+## Docker Compose
+
+```bash
+docker compose up --build
+```
+
+启动后：
+- API: `http://localhost:8000`
+- Redis: `localhost:6379`
+- PostgreSQL: `localhost:5432`
+- Worker: 在 Compose 内部自动启动
+
+默认 PostgreSQL 连接：
+
+```text
+database: adssearch
+username: adssearch
+password: adssearch
+```
+
+## 持久化设计
+
+- Redis/RQ：负责排队和分发任务
+- PostgreSQL：负责持久化任务记录、状态和最终结果
+- `GET /api/tasks/{task_id}` 优先返回数据库中的任务结果，不依赖 Redis 结果 TTL

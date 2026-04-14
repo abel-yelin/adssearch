@@ -51,6 +51,9 @@ class AppSettings(BaseModel):
     queue_name: str = Field(default=os.getenv("QUEUE_NAME", "adssearch"))
     queue_job_timeout: int = Field(default_factory=lambda: _get_int_env("QUEUE_JOB_TIMEOUT", 1800))
     queue_result_ttl: int = Field(default_factory=lambda: _get_int_env("QUEUE_RESULT_TTL", 86400))
+    queue_failure_ttl: int = Field(default_factory=lambda: _get_int_env("QUEUE_FAILURE_TTL", 86400))
+    queue_default_retry_count: int = Field(default_factory=lambda: _get_int_env("QUEUE_DEFAULT_RETRY_COUNT", 1))
+    database_url: str = Field(default=os.getenv("DATABASE_URL", "sqlite:///./adssearch.db"))
 
 
 @lru_cache(maxsize=1)

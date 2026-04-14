@@ -1,5 +1,5 @@
 from app.dependencies.services import get_task_service
-from app.schemas.search import SearchTaskStatusResponse, SearchTaskSubmitResponse
+from app.schemas.search import SearchTaskStatusResponse, SearchTaskSubmitResponse, TaskActionResponse
 
 
 class FakeTaskService:
@@ -30,6 +30,24 @@ class FakeTaskService:
                 },
                 "duration_seconds": 0.12,
             },
+            retries_left=1,
+        )
+
+    def cancel_task(self, task_id):
+        return TaskActionResponse(
+            success=True,
+            task_id=task_id,
+            status="canceled",
+            message="Task canceled successfully.",
+        )
+
+    def retry_task(self, task_id):
+        return TaskActionResponse(
+            success=True,
+            task_id=task_id,
+            new_task_id="task-5678",
+            status="queued",
+            message="Task retried successfully.",
         )
 
 
@@ -72,3 +90,35 @@ def test_task_status_endpoint(client):
     assert payload["task_id"] == "task-1234"
     assert payload["status"] == "finished"
     assert payload["result"]["data"]["query_domain"] == "example.com"
+    assert payload["retries_left"] == 1
+
+
+def test_cancel_task_endpoint(client):
+    from app.main import app
+
+    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    try:
+        response = client.post("/api/tasks/task-1234/cancel")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["status"] == "canceled"
+
+
+def test_retry_task_endpoint(client):
+    from app.main import app
+
+    app.dependency_overrides[get_task_service] = lambda: FakeTaskService()
+    try:
+        response = client.post("/api/tasks/task-1234/retry")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["status"] == "queued"
+    assert payload["new_task_id"] == "task-5678"

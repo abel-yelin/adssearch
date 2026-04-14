@@ -1,3 +1,4 @@
+from rq.command import send_stop_job_command
 from redis import Redis
 from rq import Queue
 from rq.job import Job
@@ -29,8 +30,16 @@ class TaskQueueService:
             payload,
             job_id=job_id,
             result_ttl=self.settings.queue_result_ttl,
+            failure_ttl=self.settings.queue_failure_ttl,
             job_timeout=self.settings.queue_job_timeout,
+            meta={
+                "payload": payload,
+                "retry_count": self.settings.queue_default_retry_count,
+            },
         )
 
     def fetch_job(self, job_id: str) -> Job | None:
         return self._queue.fetch_job(job_id)
+
+    def stop_job(self, job_id: str) -> None:
+        send_stop_job_command(self._redis, job_id)

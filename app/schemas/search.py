@@ -3,6 +3,19 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+TaskStatus = Literal[
+    "queued",
+    "started",
+    "finished",
+    "failed",
+    "deferred",
+    "scheduled",
+    "stopped",
+    "canceled",
+    "unknown",
+]
+
+
 class SearchRequest(BaseModel):
     domain: str = Field(..., description="要查询的域名", examples=["aiimagetovideo.ai"])
     region: str = Field(default="anywhere", description="区域过滤")
@@ -21,6 +34,15 @@ class SearchTaskSubmitResponse(BaseModel):
 class SearchTaskStatusResponse(BaseModel):
     success: bool
     task_id: str
-    status: Literal["queued", "started", "finished", "failed", "deferred", "scheduled", "stopped", "canceled", "unknown"]
+    status: TaskStatus
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+    retries_left: Optional[int] = None
+
+
+class TaskActionResponse(BaseModel):
+    success: bool
+    task_id: str
+    status: TaskStatus
+    message: str
+    new_task_id: Optional[str] = None

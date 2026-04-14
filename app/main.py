@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.db.base import Base
+from app.db.session import engine
+from app.models import search_task  # noqa: F401
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
@@ -15,6 +18,7 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     logger = get_logger(__name__)
+    Base.metadata.create_all(bind=engine)
     logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
     yield
     logger.info("Stopping %s", settings.app_name)
