@@ -6,7 +6,7 @@
 ```bash
 pip install -r requirements.txt
 playwright install chromium
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 方法二：Docker 部署
@@ -42,15 +42,20 @@ Content-Type: application/json
   "task_id": "a1b2c3d4",
   "data": {
     "query_domain": "aiimagetovideo.ai",
+    "has_ads": true,
     "advertisers": [
       {
         "advertiser_id": "AR01888412131238346753",
         "name": "HAN HU",
         "url": "https://adstransparency.google.com/advertiser/AR01888412131238346753",
-        "region": ""
+        "region": "",
+        "matched_domains": ["aiimagetovideo.ai"],
+        "other_domains": ["another-site.com", "brand.ai"],
+        "has_query_domain": true
       }
     ],
-    "all_domains": ["domain1.com", "domain2.ai"],
+    "all_domains": ["aiimagetovideo.ai", "another-site.com", "brand.ai"],
+    "other_domains": ["another-site.com", "brand.ai"],
     "ad_creatives": [],
     "total_ads_found": 0
   },
@@ -69,3 +74,39 @@ Content-Type: application/json
 - 查询通常需要 30s - 3min，取决于广告数量
 - 建议部署在有稳定网络的服务器上
 - 如果 Google 有反爬限制，可配置代理
+
+## 项目结构
+
+```bash
+app/
+  api/router.py
+  api/routes/
+    health.py
+    search.py
+  core/config.py
+  schemas/
+    search.py
+  services/
+    scraper.py
+  main.py
+tests/
+  test_health.py
+```
+
+- `app/main.py` 负责创建 FastAPI 应用
+- `app/core/config.py` 放应用配置
+- `app/api/router.py` 统一注册 API 路由
+- `app/api/routes/` 放接口路由
+- `app/schemas/` 放请求和响应模型
+- `app/services/scraper.py` 放广告抓取核心逻辑
+- `tests/` 放基础接口测试
+
+## 新入口
+
+项目现在只使用下面这个入口：
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+如果你之前使用过 `uvicorn main:app`，现在需要切换到新入口。
