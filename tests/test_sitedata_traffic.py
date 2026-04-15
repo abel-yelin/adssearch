@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector, SiteDataTrafficCollectorError
 from app.dependencies.services import get_sitedata_service
-from app.schemas.sitedata import SiteDataTrafficRequest, SiteDataTrafficResponse
+from app.schemas.sitedata import SiteDataBrowserHealthResponse, SiteDataTrafficRequest, SiteDataTrafficResponse
 from app.services.sitedata_service import SiteDataTrafficService
 
 
@@ -91,6 +91,26 @@ class FakeSiteDataService:
             engagements={"Visits": "20"},
         )
 
+    async def check_browser_health(self, request):
+        return SiteDataBrowserHealthResponse(
+            probe_domain=request.probe_domain,
+            browser_mode="cdp",
+            current_url="https://sitedata.dev/traffic/verifieddr.com",
+            has_user_info=True,
+            has_cf_token=True,
+            has_anon_client_id=True,
+            last_browser_collection_usable=True,
+            requires_manual_login=False,
+            status="healthy",
+            failure_code=None,
+            message="Browser session is healthy and SiteData collection is currently usable.",
+            recommended_action="No action needed.",
+            manual_login_url="http://192.168.0.4:6080/vnc.html",
+            manual_login_steps=["Open the VNC browser session at the provided URL."],
+            request_count=1,
+            recent_console=[],
+        )
+
 
 def test_sitedata_service_supports_browser_collector():
     payload = {
@@ -146,3 +166,68 @@ def test_sitedata_traffic_endpoint(client):
     payload = response.json()
     assert payload["requested_domain"] == "chatgpt.com"
     assert payload["monthly_visits"][1]["visits"] == 20
+
+
+def test_sitedata_browser_health_endpoint(client):
+    from app.main import app
+
+    app.dependency_overrides[get_sitedata_service] = lambda: FakeSiteDataService()
+    try:
+        response = client.post(
+            "/api/sitedata/browser-health",
+            json={"probe_domain": "verifieddr.com"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["probe_domain"] == "verifieddr.com"
+    assert payload["has_user_info"] is True
+    assert payload["requires_manual_login"] is False
+
+
+def test_sitedata_service_browser_health_supports_verified_session():
+    health_payload = {
+        "probe_domain": "verifieddr.com",
+        "current_url": "https://sitedata.dev/traffic/verifieddr.com",
+        "has_user_info": True,
+        "has_cf_token": True,
+        "has_anon_client_id": True,
+        "last_browser_collection_usable": True,
+        "requires_manual_login": False,
+        "failure_code": None,
+        "request_count": 1,
+        "recent_console": ["✅ Fetch completed. Data exists: true Error: none"],
+    }
+
+    with patch("app.services.sitedata_service.SiteDataBrowserCollector") as collector_cls:
+        collector = collector_cls.return_value
+        collector.start = AsyncMock()
+        collector.check_health = AsyncMock(return_value=health_payload)
+        collector.close = AsyncMock()
+        response = asyncio.run(
+            SiteDataTrafficService().check_browser_health(
+                request=type(
+                    "Req",
+                    (),
+                    {
+                        "probe_domain": "verifieddr.com",
+                        "browser_headless": True,
+                        "browser_timeout_ms": 30000,
+                        "browser_mode": "cdp",
+                        "browser_cdp_url": "http://127.0.0.1:9222",
+                        "browser_executable_path": None,
+                        "browser_user_data_dir": None,
+                        "browser_channel": None,
+                        "browser_extension_path": None,
+                        "browser_pre_click_wait_ms": 3000,
+                        "browser_post_click_wait_ms": 8000,
+                    },
+                )()
+            )
+        )
+
+    assert response.status == "healthy"
+    assert response.last_browser_collection_usable is True
+    assert response.requires_manual_login is False

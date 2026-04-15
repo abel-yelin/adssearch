@@ -124,72 +124,23 @@ POST /api/trends/tasks/{task_id}/cancel
 POST /api/trends/tasks/{task_id}/retry
 ```
 
-### SiteData Traffic
-```
-POST /api/sitedata/traffic
-Content-Type: application/json
+### SiteData API 文档
 
-{
-  "domain": "chatgpt.com",
-  "collection_mode": "direct",
-  "timeout_seconds": 30,
-  "proxy": null
-}
-```
+完整文档见：[docs/sitedata-api.md](/home/luolink/projects/adssearch/docs/sitedata-api.md)
 
-这个接口会返回 `sitedata.dev` 的网站流量快照，包括：
-- 月访问量趋势
-- 流量来源占比
-- Top Keywords
-- Top Countries
-- Engagement 指标
+这组接口主要包含：
+- `POST /api/sitedata/traffic`
+- `POST /api/sitedata/browser-health`
 
-如果需要复用当前登录态浏览器会话，也可以切到浏览器采集模式：
+推荐调用顺序：
+1. 先调用 `browser-health` 检查当前浏览器会话是否可用
+2. 如果返回 `healthy`，再调用 `traffic` 的 `browser` 模式
+3. 如果目标域名不依赖登录态，也可以直接使用 `traffic` 的 `direct` 模式
 
-```json
-{
-  "domain": "www.image2url.com",
-  "collection_mode": "browser",
-  "browser_mode": "cdp",
-  "browser_cdp_url": "http://127.0.0.1:9222",
-  "browser_headless": false,
-  "browser_pre_click_wait_ms": 5000,
-  "browser_post_click_wait_ms": 10000
-}
-```
+如果 `requires_manual_login = true`，当前推荐的人工处理入口仍然是：
 
-### 响应示例
-```json
-{
-  "requested_domain": "www.image2url.com",
-  "resolved_domain": "image2url.com",
-  "collection_mode": "browser",
-  "site_name": "image2url.com",
-  "snapshot_date": "2026-03-01T00:00:00+00:00",
-  "monthly_visits": [
-    { "month": "2026-01-01", "visits": 216948 },
-    { "month": "2026-02-01", "visits": 434893 },
-    { "month": "2026-03-01", "visits": 679362 }
-  ],
-  "traffic_sources": [
-    { "source": "Search", "share_percent": 53.44 },
-    { "source": "Direct", "share_percent": 33.3 }
-  ],
-  "top_keywords": [
-    { "keyword": "image to url", "volume": 20890, "cpc": 0.43, "estimated_value": 17600 }
-  ],
-  "top_countries": [
-    { "country_code": "US", "share_percent": 30.87 }
-  ],
-  "engagements": {
-    "Visits": "679362",
-    "TimeOnSite": "122.47499103426671",
-    "PagePerVisit": "3.4776303883682718"
-  },
-  "browser_debug": {
-    "request_count": 2
-  }
-}
+```text
+http://192.168.0.4:6080/vnc.html
 ```
 
 ## 前端配置

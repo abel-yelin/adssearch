@@ -144,6 +144,58 @@ class SiteDataBrowserCollector:
         }
         return payload
 
+    async def check_health(
+        self,
+        probe_domain: str,
+        *,
+        pre_click_wait_ms: int = 3000,
+        post_click_wait_ms: int = 8000,
+    ) -> dict[str, Any]:
+        if self._page is None:
+            raise SiteDataTrafficCollectorError("collector_not_started", "Browser collector has not been started.")
+
+        self._requests = []
+        self._console_logs = []
+        self._page_errors = []
+        normalized_domain = SiteDataTrafficCollector._normalize_domain(probe_domain)
+        url = f"https://sitedata.dev/traffic/{normalized_domain}"
+
+        await self._page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._page.wait_for_timeout(pre_click_wait_ms)
+        storage_before = await self._read_storage()
+
+        try:
+            await self._page.get_by_role("button", name="Analyze").click(timeout=10000)
+        except Exception as exc:
+            raise SiteDataTrafficCollectorError(
+                "analyze_button_unavailable",
+                f"Could not click SiteData Analyze button for '{normalized_domain}': {exc}",
+            ) from exc
+
+        await self._page.wait_for_timeout(post_click_wait_ms)
+        storage_after = await self._read_storage()
+        latest_storage = self._sanitize_storage_snapshot(storage_after or storage_before)
+        payload = self._extract_latest_payload()
+        failure_code = self._derive_health_failure_code(payload)
+        can_collect = payload is not None
+        requires_manual_login = (
+            not latest_storage["has_user_info"]
+            or not latest_storage["has_cf_token"]
+            or failure_code == "verification_required"
+        )
+        return {
+            "probe_domain": normalized_domain,
+            "current_url": latest_storage.get("href"),
+            "has_user_info": latest_storage["has_user_info"],
+            "has_cf_token": latest_storage["has_cf_token"],
+            "has_anon_client_id": latest_storage["has_anon_client_id"],
+            "last_browser_collection_usable": can_collect,
+            "requires_manual_login": requires_manual_login,
+            "failure_code": failure_code,
+            "request_count": len(self._requests),
+            "recent_console": [self._sanitize_console_text(item["text"]) for item in self._console_logs[-8:]],
+        }
+
     async def _read_storage(self) -> dict[str, Any]:
         if self._page is None:
             return {}
@@ -181,6 +233,17 @@ class SiteDataBrowserCollector:
         if not successful_requests:
             return None
         return successful_requests[-1]["payload"]
+
+    def _derive_health_failure_code(self, payload: dict[str, Any] | None) -> str | None:
+        if payload is not None:
+            return None
+        if any("Verification required before fetching traffic data" in item["text"] for item in self._console_logs):
+            return "verification_required"
+        if any(item["status"] in {401, 403} for item in self._requests):
+            return "access_denied"
+        if not self._requests:
+            return "no_requests"
+        return "browser_capture_failed"
 
     async def _raise_browser_failure(self, domain: str) -> None:
         if any("Verification required before fetching traffic data" in item["text"] for item in self._console_logs):

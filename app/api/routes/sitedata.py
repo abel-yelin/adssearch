@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollectorError
 from app.dependencies.services import get_sitedata_service
-from app.schemas.sitedata import SiteDataTrafficRequest, SiteDataTrafficResponse
+from app.schemas.sitedata import (
+    SiteDataBrowserHealthRequest,
+    SiteDataBrowserHealthResponse,
+    SiteDataTrafficRequest,
+    SiteDataTrafficResponse,
+)
 from app.services.sitedata_service import SiteDataTrafficService
 
 
@@ -19,3 +24,11 @@ async def fetch_sitedata_traffic(
     except SiteDataTrafficCollectorError as exc:
         status_code = 400 if exc.code == "invalid_domain" else 502
         raise HTTPException(status_code=status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@router.post("/browser-health", response_model=SiteDataBrowserHealthResponse)
+async def fetch_sitedata_browser_health(
+    request: SiteDataBrowserHealthRequest,
+    service: SiteDataTrafficService = Depends(get_sitedata_service),
+) -> SiteDataBrowserHealthResponse:
+    return await service.check_browser_health(request)
