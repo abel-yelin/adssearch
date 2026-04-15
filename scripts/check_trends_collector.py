@@ -18,9 +18,15 @@ async def _run(args: argparse.Namespace) -> int:
         proxy=args.proxy,
         language=args.language,
         timeout_ms=args.timeout_ms,
+        browser_mode=args.browser_mode,
+        browser_cdp_url=args.browser_cdp_url,
+        browser_executable_path=args.browser_executable_path,
+        browser_user_data_dir=args.browser_user_data_dir,
+        browser_channel=args.browser_channel,
+        browser_extension_path=args.browser_extension_path,
     )
-    await collector.start()
     try:
+        await collector.start()
         result = await collector.capture(
             base_keyword=args.base_keyword,
             keywords=args.keywords,
@@ -73,6 +79,12 @@ def main() -> int:
     parser.add_argument("--timezone-offset", type=int, default=0)
     parser.add_argument("--timeout-ms", type=int, default=45000)
     parser.add_argument("--proxy", default=settings.trend_default_proxy)
+    parser.add_argument("--browser-mode", choices=["isolated", "cdp", "persistent"], default=settings.trend_browser_mode)
+    parser.add_argument("--browser-cdp-url", default=settings.trend_browser_cdp_url)
+    parser.add_argument("--browser-executable-path", default=settings.trend_browser_executable_path)
+    parser.add_argument("--browser-user-data-dir", default=settings.trend_browser_user_data_dir)
+    parser.add_argument("--browser-channel", default=settings.trend_browser_channel)
+    parser.add_argument("--browser-extension-path", default=settings.trend_browser_extension_path)
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
     return asyncio.run(_run(args))

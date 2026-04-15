@@ -1,0 +1,148 @@
+import asyncio
+import subprocess
+from unittest.mock import AsyncMock, patch
+
+from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector, SiteDataTrafficCollectorError
+from app.dependencies.services import get_sitedata_service
+from app.schemas.sitedata import SiteDataTrafficRequest, SiteDataTrafficResponse
+from app.services.sitedata_service import SiteDataTrafficService
+
+
+def test_sitedata_collector_parses_successful_response():
+    collector = SiteDataTrafficCollector()
+    body = (
+        '{"SiteName":"chatgpt.com","SnapshotDate":"2026-03-01T00:00:00+00:00",'
+        '"EstimatedMonthlyVisits":{"2026-01-01":10,"2026-02-01":20},'
+        '"TrafficSources":{"Direct":0.5,"Search":0.3},'
+        '"TopKeywords":[{"Name":"chatgpt","Volume":100,"Cpc":0.1,"EstimatedValue":200}],'
+        '"TopCountryShares":[{"CountryCode":"US","Value":0.4}],'
+        '"Engagments":{"Visits":"20"},"fromCache":true}\n__STATUS__:200'
+    )
+
+    with patch("app.collectors.sitedata_traffic_collector.subprocess.run") as run:
+        run.return_value = subprocess.CompletedProcess(args=["curl"], returncode=0, stdout=body, stderr="")
+        payload = collector.fetch("chatgpt.com")
+
+    assert payload["SiteName"] == "chatgpt.com"
+    assert payload["resolved_domain"] == "chatgpt.com"
+    assert payload["EstimatedMonthlyVisits"]["2026-02-01"] == 20
+
+
+def test_sitedata_collector_retries_without_www_on_unauthorized():
+    collector = SiteDataTrafficCollector()
+    outputs = [
+        subprocess.CompletedProcess(
+            args=["curl"],
+            returncode=0,
+            stdout='{"error":"Unauthorized clientId"}\n__STATUS__:429',
+            stderr="",
+        ),
+        subprocess.CompletedProcess(
+            args=["curl"],
+            returncode=0,
+            stdout='{"SiteName":"image2url.com","EstimatedMonthlyVisits":{},"TrafficSources":{},"TopKeywords":[],"TopCountryShares":[],"Engagments":{}}\n__STATUS__:200',
+            stderr="",
+        ),
+    ]
+
+    with patch("app.collectors.sitedata_traffic_collector.subprocess.run", side_effect=outputs):
+        payload = collector.fetch("www.image2url.com")
+
+    assert payload["requested_domain"] == "www.image2url.com"
+    assert payload["resolved_domain"] == "image2url.com"
+
+
+def test_sitedata_collector_raises_for_invalid_domain():
+    collector = SiteDataTrafficCollector()
+    try:
+        collector.fetch("not-a-domain")
+    except SiteDataTrafficCollectorError as exc:
+        assert exc.code == "invalid_domain"
+    else:
+        raise AssertionError("Expected invalid_domain error")
+
+
+class FakeSiteDataService:
+    async def fetch_traffic(self, request):
+        return SiteDataTrafficResponse(
+            requested_domain=request.domain,
+            resolved_domain=request.domain,
+            collection_mode="direct",
+            site_name=request.domain,
+            title="Example",
+            description="Example domain",
+            snapshot_date="2026-03-01T00:00:00+00:00",
+            global_rank=10,
+            category_rank=None,
+            from_cache=True,
+            monthly_visits=[
+                {"month": "2026-01-01", "visits": 10},
+                {"month": "2026-02-01", "visits": 20},
+            ],
+            traffic_sources=[
+                {"source": "Direct", "share_percent": 50.0},
+            ],
+            top_keywords=[
+                {"keyword": "example", "volume": 100, "cpc": 0.1, "estimated_value": 200},
+            ],
+            top_countries=[
+                {"country_code": "US", "share_percent": 40.0},
+            ],
+            engagements={"Visits": "20"},
+        )
+
+
+def test_sitedata_service_supports_browser_collector():
+    payload = {
+        "requested_domain": "www.image2url.com",
+        "resolved_domain": "image2url.com",
+        "SiteName": "image2url.com",
+        "EstimatedMonthlyVisits": {"2026-01-01": 217000, "2026-03-01": 679000},
+        "TrafficSources": {"Search": 0.534, "Direct": 0.333},
+        "TopKeywords": [{"Name": "image to url", "Volume": 1000, "Cpc": 0.2, "EstimatedValue": 500}],
+        "TopCountryShares": [{"CountryCode": "US", "Value": 0.309}],
+        "Engagments": {"MonthlyVisits": "679K"},
+        "browser_debug": {"request_count": 2},
+    }
+
+    with patch("app.services.sitedata_service.SiteDataBrowserCollector") as collector_cls:
+        collector = collector_cls.return_value
+        collector.start = AsyncMock()
+        collector.fetch = AsyncMock(return_value=payload)
+        collector.close = AsyncMock()
+        response = asyncio.run(
+            SiteDataTrafficService().fetch_traffic(
+                SiteDataTrafficRequest(
+                    domain="www.image2url.com",
+                    collection_mode="browser",
+                    browser_mode="cdp",
+                    browser_cdp_url="http://127.0.0.1:9222",
+                )
+            )
+        )
+
+    collector.start.assert_awaited_once()
+    collector.fetch.assert_awaited_once()
+    collector.close.assert_awaited_once()
+    assert response.collection_mode == "browser"
+    assert response.resolved_domain == "image2url.com"
+    assert response.browser_debug == {"request_count": 2}
+    assert response.monthly_visits[-1].visits == 679000
+
+
+def test_sitedata_traffic_endpoint(client):
+    from app.main import app
+
+    app.dependency_overrides[get_sitedata_service] = lambda: FakeSiteDataService()
+    try:
+        response = client.post(
+            "/api/sitedata/traffic",
+            json={"domain": "chatgpt.com"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requested_domain"] == "chatgpt.com"
+    assert payload["monthly_visits"][1]["visits"] == 20

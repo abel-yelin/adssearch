@@ -33,7 +33,16 @@ def run_trend_task(payload: dict) -> dict:
 async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict:
     settings = get_settings()
     resolved_proxy = request.proxy or settings.trend_default_proxy
-    collector = GoogleTrendsCollector(proxy=resolved_proxy, language=request.language)
+    collector = GoogleTrendsCollector(
+        proxy=resolved_proxy,
+        language=request.language,
+        browser_mode=request.browser_mode or settings.trend_browser_mode,
+        browser_cdp_url=request.browser_cdp_url or settings.trend_browser_cdp_url,
+        browser_executable_path=request.browser_executable_path or settings.trend_browser_executable_path,
+        browser_user_data_dir=request.browser_user_data_dir or settings.trend_browser_user_data_dir,
+        browser_channel=settings.trend_browser_channel,
+        browser_extension_path=settings.trend_browser_extension_path,
+    )
     keyword_service = KeywordService()
     queue_service = TaskQueueService(settings)
 
@@ -41,8 +50,8 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
         TrendTaskRepository(session).set_task_status(task_id, "running", started=True)
     queue_service.set_progress(task_id, {"status": "running", "current_batch_no": 0})
 
-    await collector.start()
     try:
+        await collector.start()
         while True:
             with get_db_session() as session:
                 repo = TrendTaskRepository(session)

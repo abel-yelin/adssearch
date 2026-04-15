@@ -2,6 +2,7 @@ from app.core.config import get_settings
 from app.services.ads_task_service import AdsTaskService
 from app.services.queue_service import TaskQueueService
 from app.services.search_service import SearchService
+from app.services.sitedata_service import SiteDataTrafficService
 from app.services.sitemap_service import SitemapService
 from app.services.task_service import TaskService
 
@@ -25,3 +26,7 @@ def get_trend_task_service() -> TaskService:
 def get_sitemap_service() -> SitemapService:
     settings = get_settings()
     return SitemapService(TaskQueueService(settings), settings)
+
+
+def get_sitedata_service() -> SiteDataTrafficService:
+    return SiteDataTrafficService()

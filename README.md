@@ -124,48 +124,71 @@ POST /api/trends/tasks/{task_id}/cancel
 POST /api/trends/tasks/{task_id}/retry
 ```
 
-### 响应示例
-```json
+### SiteData Traffic
+```
+POST /api/sitedata/traffic
+Content-Type: application/json
+
 {
-  "success": true,
-  "task_id": "a1b2c3d4",
-  "status": "queued",
-  "message": "Search task submitted successfully."
+  "domain": "chatgpt.com",
+  "collection_mode": "direct",
+  "timeout_seconds": 30,
+  "proxy": null
 }
 ```
 
-任务完成后，`GET /api/tasks/{task_id}` 会返回：
+这个接口会返回 `sitedata.dev` 的网站流量快照，包括：
+- 月访问量趋势
+- 流量来源占比
+- Top Keywords
+- Top Countries
+- Engagement 指标
+
+如果需要复用当前登录态浏览器会话，也可以切到浏览器采集模式：
 
 ```json
 {
-  "success": true,
-  "task_id": "a1b2c3d4",
-  "status": "finished",
-  "result": {
-    "success": true,
-    "task_id": "worker-task",
-    "data": {
-      "query_domain": "aiimagetovideo.ai",
-      "has_ads": true,
-      "advertisers": [
-        {
-          "advertiser_id": "AR01888412131238346753",
-          "name": "HAN HU",
-          "url": "https://adstransparency.google.com/advertiser/AR01888412131238346753",
-          "region": "",
-          "matched_domains": ["aiimagetovideo.ai"],
-          "other_domains": ["another-site.com", "brand.ai"],
-          "has_query_domain": true
-        }
-      ],
-      "all_domains": ["aiimagetovideo.ai", "another-site.com", "brand.ai"],
-      "other_domains": ["another-site.com", "brand.ai"],
-      "ad_creatives": [],
-      "total_ads_found": 0
-    },
-    "duration_seconds": 45.32
+  "domain": "www.image2url.com",
+  "collection_mode": "browser",
+  "browser_mode": "cdp",
+  "browser_cdp_url": "http://127.0.0.1:9222",
+  "browser_headless": false,
+  "browser_pre_click_wait_ms": 5000,
+  "browser_post_click_wait_ms": 10000
+}
+```
+
+### 响应示例
+```json
+{
+  "requested_domain": "www.image2url.com",
+  "resolved_domain": "image2url.com",
+  "collection_mode": "browser",
+  "site_name": "image2url.com",
+  "snapshot_date": "2026-03-01T00:00:00+00:00",
+  "monthly_visits": [
+    { "month": "2026-01-01", "visits": 216948 },
+    { "month": "2026-02-01", "visits": 434893 },
+    { "month": "2026-03-01", "visits": 679362 }
+  ],
+  "traffic_sources": [
+    { "source": "Search", "share_percent": 53.44 },
+    { "source": "Direct", "share_percent": 33.3 }
+  ],
+  "top_keywords": [
+    { "keyword": "image to url", "volume": 20890, "cpc": 0.43, "estimated_value": 17600 }
+  ],
+  "top_countries": [
+    { "country_code": "US", "share_percent": 30.87 }
+  ],
+  "engagements": {
+    "Visits": "679362",
+    "TimeOnSite": "122.47499103426671",
+    "PagePerVisit": "3.4776303883682718"
   },
-  "retries_left": 1
+  "browser_debug": {
+    "request_count": 2
+  }
 }
 ```
 
@@ -271,6 +294,12 @@ QUEUE_FAILURE_TTL=86400
 QUEUE_DEFAULT_RETRY_COUNT=1
 DATABASE_URL=postgresql+psycopg2://adssearch:adssearch@localhost:5432/adssearch
 TRENDS_PROXY=
+TREND_BROWSER_MODE=isolated
+TREND_BROWSER_CDP_URL=
+TREND_BROWSER_EXECUTABLE_PATH=
+TREND_BROWSER_USER_DATA_DIR=
+TREND_BROWSER_CHANNEL=chrome
+TREND_BROWSER_EXTENSION_PATH=
 TREND_BATCH_DELAY_MIN_SECONDS=4
 TREND_BATCH_DELAY_MAX_SECONDS=9
 TREND_BLOCK_COOLDOWN_BASE_SECONDS=20
@@ -326,6 +355,73 @@ python -m app.sitemap_scheduler
 .venv/bin/python scripts/check_trends_collector.py --base-keyword openai --keywords chatgpt gpt-4
 ```
 
+## SiteData Traffic 功能落地
+
+### 直接验证采集器
+
+```bash
+.venv/bin/python scripts/check_sitedata_traffic.py --domain chatgpt.com
+```
+
+说明：
+- 当前验证过 `chatgpt.com`、`twitter.com` 可以拿到完整数据
+- 部分域名会被上游返回 `Unauthorized clientId`
+- 采集器会自动尝试 `www.` 到裸域的回退
+
+### 复用本机已登录 Chrome 会话
+
+推荐先启动一个带远程调试端口的本机 Chrome，再让采集器用 `cdp` 模式接入。这样最接近浏览器扩展的运行环境，也更容易复用登录态、Cookie 和本机代理规则。
+
+启动调试 Chrome：
+
+```bash
+chmod +x scripts/start_chrome_debug.sh
+PORT=9222 \
+USER_DATA_DIR="$HOME/.cache/adssearch-chrome-debug" \
+EXTENSION_PATH="/home/luolink/projects/demo/0.5.1_0" \
+scripts/start_chrome_debug.sh
+```
+
+如果你的机器没有系统级 `google-chrome/chromium` 命令，可以额外传 `CHROME_BIN`。如果是在无桌面的 Linux 环境里联调，还可能需要：
+
+```bash
+CHROME_EXTRA_ARGS="--no-sandbox --headless=new"
+```
+
+连接这个会话做 SiteData 浏览器模式冒烟：
+
+```bash
+.venv/bin/python scripts/check_sitedata_browser.py \
+  --domain www.image2url.com \
+  --browser-mode cdp \
+  --browser-cdp-url http://127.0.0.1:9222
+```
+
+连接这个会话做 Google Trends 冒烟：
+
+```bash
+.venv/bin/python scripts/check_trends_collector.py \
+  --browser-mode cdp \
+  --browser-cdp-url http://127.0.0.1:9222 \
+  --base-keyword image \
+  --keywords photo picture graphic
+```
+
+### 复用本机浏览器用户目录
+
+如果你更希望由 Playwright 自己启动浏览器，但继续沿用本机 profile，可以用 `persistent` 模式：
+
+```bash
+.venv/bin/python scripts/check_trends_collector.py \
+  --browser-mode persistent \
+  --browser-user-data-dir "$HOME/.cache/adssearch-chrome-debug" \
+  --browser-channel chrome \
+  --browser-extension-path "/home/luolink/projects/demo/0.5.1_0" \
+  --base-keyword image \
+  --keywords photo picture graphic \
+  --show-browser
+```
+
 ### 通过 API 提交并轮询任务
 
 先启动 API、Worker、Redis，再执行：
@@ -339,6 +435,8 @@ python -m app.sitemap_scheduler
 - 如果返回 `captcha_or_blocked` 或 `HTTP 429`，说明当前机器或代理 IP 被 Google Trends 限流。
 - 采集器现在会明确识别 `429/403/captcha`，不会再把这类问题误报成普通超时。
 - 如果请求体里没传 `proxy`，系统会自动尝试 `TRENDS_PROXY`，其次读取 `ALL_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY`。
+- 如果你想尽量复现浏览器扩展的运行优势，优先用 `cdp` 或 `persistent` 模式，复用本机 Chrome 会话和登录态。
+- `cdp` 模式要求本机 Chrome 已用 `--remote-debugging-port` 启动；仓库里已经提供 `scripts/start_chrome_debug.sh` 方便一键启动。
 - 任务执行时会在批次之间自动随机等待，并在遇到 `captcha_or_blocked` 时进入更长冷却后再重试。
 - 真实环境建议配置稳定代理，并降低访问频率，否则很容易被 Google Trends 风控。
 

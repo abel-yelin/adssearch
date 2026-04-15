@@ -63,6 +63,12 @@ class AppSettings(BaseModel):
         or os.getenv("HTTP_PROXY")
         or os.getenv("http_proxy")
     )
+    trend_browser_mode: str = Field(default=os.getenv("TREND_BROWSER_MODE", "isolated"))
+    trend_browser_cdp_url: str | None = Field(default=os.getenv("TREND_BROWSER_CDP_URL"))
+    trend_browser_executable_path: str | None = Field(default=os.getenv("TREND_BROWSER_EXECUTABLE_PATH"))
+    trend_browser_user_data_dir: str | None = Field(default=os.getenv("TREND_BROWSER_USER_DATA_DIR"))
+    trend_browser_channel: str | None = Field(default=os.getenv("TREND_BROWSER_CHANNEL", "chrome"))
+    trend_browser_extension_path: str | None = Field(default=os.getenv("TREND_BROWSER_EXTENSION_PATH"))
     trend_batch_delay_min_seconds: int = Field(default_factory=lambda: _get_int_env("TREND_BATCH_DELAY_MIN_SECONDS", 4))
     trend_batch_delay_max_seconds: int = Field(default_factory=lambda: _get_int_env("TREND_BATCH_DELAY_MAX_SECONDS", 9))
     trend_block_cooldown_base_seconds: int = Field(

@@ -27,6 +27,10 @@ class TrendTaskCreateRequest(BaseModel):
     language: str = Field(default="en-US", description="Playwright 页面语言")
     timezone_offset: int = Field(default=0, description="Google Trends tz 参数，单位分钟")
     proxy: str | None = Field(default=None)
+    browser_mode: Literal["isolated", "cdp", "persistent"] = Field(default="isolated")
+    browser_cdp_url: str | None = Field(default=None)
+    browser_executable_path: str | None = Field(default=None)
+    browser_user_data_dir: str | None = Field(default=None)
 
 
 class TrendTaskCreateResponse(BaseModel):
@@ -88,4 +92,3 @@ class TrendTaskExportResponse(BaseModel):
     skipped_keywords: list[dict[str, Any]]
     all_captured_data: list[dict[str, Any]]
     statistics: dict[str, Any]
-
