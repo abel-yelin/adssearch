@@ -172,6 +172,37 @@ class AppSettings(BaseModel):
     domain_recommendation_whois_cache_ttl_seconds: int = Field(
         default_factory=lambda: _get_int_env("DOMAIN_RECOMMENDATION_WHOIS_CACHE_TTL_SECONDS", 300)
     )
+    pubspy_domain_query_base_url: str = Field(
+        default=os.getenv("PUBSPY_DOMAIN_QUERY_BASE_URL", "https://whoisdomain.charlie0simmon.workers.dev")
+    )
+    pubspy_hostio_base_url: str = Field(
+        default=os.getenv("PUBSPY_HOSTIO_BASE_URL", "https://host.io/adsense")
+    )
+    pubspy_proxy_url: str | None = Field(
+        default=os.getenv("PUBSPY_PROXY_URL")
+        or os.getenv("HTTPS_PROXY")
+        or os.getenv("https_proxy")
+        or os.getenv("HTTP_PROXY")
+        or os.getenv("http_proxy")
+    )
+    pubspy_client_token: str | None = Field(
+        default=os.getenv("PUBSPY_CLIENT_TOKEN", "1MsiteTraffic2026")
+    )
+    pubspy_http_timeout_seconds: int = Field(
+        default_factory=lambda: _get_int_env("PUBSPY_HTTP_TIMEOUT_SECONDS", 20)
+    )
+    pubspy_domain_query_timeout_seconds: int = Field(
+        default_factory=lambda: _get_int_env("PUBSPY_DOMAIN_QUERY_TIMEOUT_SECONDS", 6)
+    )
+    pubspy_domain_search_limit: int = Field(
+        default_factory=lambda: _get_int_env("PUBSPY_DOMAIN_SEARCH_LIMIT", 100)
+    )
+    pubspy_enrichment_concurrency: int = Field(
+        default_factory=lambda: _get_int_env("PUBSPY_ENRICHMENT_CONCURRENCY", 5)
+    )
+    pubspy_cache_ttl_seconds: int = Field(
+        default_factory=lambda: _get_int_env("PUBSPY_CACHE_TTL_SECONDS", 600)
+    )
 
 
 @lru_cache(maxsize=1)

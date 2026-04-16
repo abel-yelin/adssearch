@@ -1,0 +1,74 @@
+[
+  {
+    "url": "https://ahrefs.com/cdn-cgi/rum?",
+    "method": "POST",
+    "resource_type": "xhr",
+    "post_data": "{\"resources\":[],\"referrer\":\"https://ahrefs.com/traffic-checker/\",\"eventType\":1,\"firstPaint\":2955.2999999523163,\"firstContentfulPaint\":2955.2999999523163,\"startTime\":1776359120118,\"versions\":{\"fl\":\"2025.9.1\",\"js\":\"2024.6.1\",\"timings\":1},\"pageloadId\":\"9e9f6795-ecb5-4f6d-80fc-5d98650d86fd\",\"location\":\"https://ahrefs.com/traffic-checker/?input=lovable.dev&mode=subdomains\",\"nt\":\"navigate\",\"serverTimings\":[{\"name\":\"cfCacheStatus\",\"dur\":0,\"desc\":\"BYPASS\"},{\"name\":\"cfOrigin\",\"dur\":0,\"desc\":\"\"},{\"name\":\"cfEdge\",\"dur\":517,\"desc\":\"\"}],\"timingsV2\":{\"nextHopProtocol\":\"h2\",\"transferSize\":121012,\"decodedBodySize\":788995},\"dt\":\"\",\"siteToken\":\"cea591b4d3e34b3f88e158c0ce10b84a\",\"st\":2}"
+  },
+  {
+    "url": "blob:https://challenges.cloudflare.com/4e1e021f-7bde-40fe-9ca4-878469be9aac",
+    "method": "GET",
+    "resource_type": "other",
+    "post_data": null
+  },
+  {
+    "url": "blob:https://challenges.cloudflare.com/4e1e021f-7bde-40fe-9ca4-878469be9aac",
+    "method": "GET",
+    "resource_type": "other",
+    "post_data": null
+  },
+  {
+    "url": "blob:https://challenges.cloudflare.com/4e1e021f-7bde-40fe-9ca4-878469be9aac",
+    "method": "GET",
+    "resource_type": "other",
+    "post_data": null
+  },
+  {
+    "url": "blob:https://challenges.cloudflare.com/4e1e021f-7bde-40fe-9ca4-878469be9aac",
+    "method": "GET",
+    "resource_type": "other",
+    "post_data": null
+  },
+  {
+    "url": "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/pat/9ed4c6606c53e665/1776359128148/b5e5625bb99412197534d1404e7833c7ea7118e28a79385378187f7949be73f7/Ps2DN59OIktwzPA",
+    "method": "GET",
+    "resource_type": "fetch",
+    "post_data": null
+  },
+  {
+    "url": "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/flow/ov1/3520730589:1776356030:eN2sgrD-zofR7dpB1mBZXyTQDCBFwk1Uf5ETspx84aU/9ed4c6606c53e665/nRmbkdFoeG2QJhzwptbHXpygFb9ZvYdOhhGNPNjdn6A-1776359127-1.2.1.1-UDwHptAuwQpEOyDfmGA1xN9clgxgNkFtdWH.0pFDkS0GJWN3bg8eFmW.lmvfTmoB",
+    "method": "POST",
+    "resource_type": "xhr",
+    "post_data": "Kpra0WI2NfeFJCMS81z2XFv6vSnvAPPlJReGSLKM89jtJkyR1loHtZgY$GSvYKNHg9Y$I$guOX8tysoEOJ6Q1d+oL1ysXgS$zBwZn59xRs5CDzo+BOE1ddUaGmrN-qwwBhKrcjEOLSfOa4J79ibHu61z8CgvytFS4J49rLLBKNxum$8EuA9YXFaHEvLDK$qlG9TOZzcO6oZAKlW3swKA$SvxySux8YK$L+nkxee9JAB8hfGXZBXYB3leyt-EJqAAu$zbrHbftB1yo0jThLabAsikd$D8BYh7Gywijoi$vuGNE5eYueGtndjrA5AkWi4prCD4nCWEtKoA+QeaPdyAodo0$6tEJq+hBhUMBUvNYvag0c+5JcCSuJIwQbkbBe1l9CT2JmLoqES7be42kM+AseWWjFbgnl8hM32cw6rYs1zCFJ9Hjgr-q8Ja53FWppJsBvcl7HqH3DJNB55433fZDSz6ziiPJ8Wn+qEjKZA1M3-$dwv0D8iyiU4ZqomoebIzv5hqSOFkesj-Agle+ib6N5Tw97wxomxzaoWRxJIPpKjAzgamiQqkPT3wqqkXijN3nH4YNbbSgxNgHEXehBJkG3ZTGYF6pijMRO1WfKlDZQUyMNHehwHenHUFNLAIc1muQJw11Qnma8yvXW3RHDj1p$5IzN4sL9lIEiwmfbbXobCmhnUYL9zvNwooD13Bq8YF719rOk8Cdb8PJKKm3U9uT230fLwE9pEO4DGezRYbCKiXys$M$B1J587lAPvyt+wlYR9H9ohpNU-ZrgoPyXh1-6TcXEwIaqlwI94NnsuTejqDomtntfh4L21jUXuPf+QObj0A+1llWJe9pITXf-SwH6XT8+cEypqDFMfL0OJ1IhRBwpTmM0oLz24-Y9SSMcYwxj6xSBHOrQjxfcgiWK1WXv8vmG+X3aAhjwXv-Fc9dI56ZxJft8IAY4Wlhppz24XIY52l9cw2J3+FO2ipEmyw+$ofK8qAdEkS$vs9WwB+"
+  },
+  {
+    "url": "blob:https://challenges.cloudflare.com/b081a19d-cea5-4087-8a9e-3c8d03795612",
+    "method": "GET",
+    "resource_type": "other",
+    "post_data": null
+  },
+  {
+    "url": "https://ahrefs.com/assets/esbuild/language-icon-MJHVVN6O.svg",
+    "method": "GET",
+    "resource_type": "image",
+    "post_data": null
+  },
+  {
+    "url": "https://ahrefs.com/assets/esbuild/2-1-top-pages-MMQCR7HN.png",
+    "method": "GET",
+    "resource_type": "image",
+    "post_data": null
+  },
+  {
+    "url": "https://ahrefs.com/assets/esbuild/2-2-top-subfolders-LXKXEEV5.png",
+    "method": "GET",
+    "resource_type": "image",
+    "post_data": null
+  },
+  {
+    "url": "https://ahrefs.com/assets/esbuild/2-3-top-subdomains-5CJ4EVUH.png",
+    "method": "GET",
+    "resource_type": "image",
+    "post_data": null
+  }
+]

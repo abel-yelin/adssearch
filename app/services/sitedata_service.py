@@ -1,5 +1,5 @@
 from app.collectors.sitedata_browser_collector import SiteDataBrowserCollector
-from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector
+from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector, SiteDataTrafficCollectorError
 from app.core.config import get_settings
 from app.schemas.sitedata import (
     SiteDataBrowserHealthRequest,
@@ -39,11 +39,26 @@ class SiteDataTrafficService:
             finally:
                 await collector.close()
         else:
+            browser_tokens: dict | None = None
+            client_id = request.client_id
+            cf_token = request.cf_token
+            if request.sync_cf_token_from_browser:
+                browser_tokens = await self._read_browser_session_tokens(request)
+                client_id = browser_tokens.get("anon_client_id") or client_id
+                cf_token = browser_tokens.get("cf_token") or cf_token
             collector = SiteDataTrafficCollector(
                 timeout_seconds=request.timeout_seconds,
                 proxy=request.proxy,
             )
-            payload = collector.fetch(request.domain)
+            try:
+                payload = collector.fetch(request.domain, client_id=client_id, cf_token=cf_token)
+            except SiteDataTrafficCollectorError as exc:
+                if request.sync_cf_token_from_browser and exc.code == "unauthorized_client":
+                    raise SiteDataTrafficCollectorError(
+                        "verification_required",
+                        self._build_browser_sync_failure_message(browser_tokens or {}),
+                    ) from exc
+                raise
 
         return self._build_response(payload, request.collection_mode)
 
@@ -128,6 +143,29 @@ class SiteDataTrafficService:
             engagements=payload.get("Engagments") or {},
             browser_debug=payload.get("browser_debug"),
         )
+
+    async def _read_browser_session_tokens(self, request: SiteDataTrafficRequest) -> dict:
+        collector = SiteDataBrowserCollector(
+            headless=request.browser_headless,
+            timeout_ms=request.browser_timeout_ms,
+            browser_mode=request.browser_mode or self.settings.trend_browser_mode,
+            browser_cdp_url=request.browser_cdp_url or self.settings.trend_browser_cdp_url,
+            browser_executable_path=request.browser_executable_path or self.settings.trend_browser_executable_path,
+            browser_user_data_dir=request.browser_user_data_dir or self.settings.trend_browser_user_data_dir,
+            browser_channel=request.browser_channel or self.settings.trend_browser_channel,
+            browser_extension_path=request.browser_extension_path or self.settings.trend_browser_extension_path,
+        )
+        try:
+            await collector.start()
+            return await collector.read_session_tokens(
+                request.domain,
+                pre_wait_ms=min(request.browser_pre_click_wait_ms, 5000),
+            )
+        finally:
+            try:
+                await collector.close()
+            except Exception:
+                pass
 
     def _build_browser_health_response(self, payload: dict, *, browser_mode: str) -> SiteDataBrowserHealthResponse:
         healthy = bool(payload.get("last_browser_collection_usable"))
@@ -217,3 +255,9 @@ class SiteDataTrafficService:
             "If Cloudflare or another verification page appears, finish the manual verification there.",
             "Keep the same Chrome profile and browser window open, then rerun the health check or collection request.",
         ]
+
+    @staticmethod
+    def _build_browser_sync_failure_message(browser_tokens: dict) -> str:
+        if not browser_tokens.get("has_cf_token"):
+            return "Browser session sync did not find a usable cf_token. Open SiteData in that browser, complete verification, then retry."
+        return "Synchronized browser cf_token was rejected or expired. Refresh the SiteData verification in that browser session, then retry."

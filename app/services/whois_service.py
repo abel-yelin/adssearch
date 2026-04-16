@@ -83,17 +83,21 @@ class WhoisService:
                 pending.append(domain)
 
         if pending:
-            with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+            executor = ThreadPoolExecutor(max_workers=self.concurrency)
+            try:
                 futures = {domain: executor.submit(self._lookup_domain, domain) for domain in pending}
                 for domain in pending:
                     future = futures[domain]
                     try:
                         result = future.result(timeout=self.timeout_seconds)
                     except TimeoutError:
+                        future.cancel()
                         result = DomainAvailabilityResult(domain=domain, available=False, error=True)
                     results[domain] = result
                     if not result.error:
                         self._set_cached_result(domain, result)
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
         return [results[domain] for domain in ordered_domains]
 

@@ -12,6 +12,22 @@
 2. `POST /api/sitedata/browser-health`
 用途：检查浏览器会话是否仍然具备可用的登录态、`cf_token` 和采集能力
 
+### 默认会话
+
+当前部署默认已经接到持久化 `CDP` 会话：
+
+- `TREND_BROWSER_MODE=cdp`
+- `TREND_BROWSER_CDP_URL=http://127.0.0.1:9333`
+- `TREND_BROWSER_USER_DATA_DIR=/home/luolink/.cache/adssearch/sitedata-chrome-profile`
+- `BROWSER_MANUAL_LOGIN_URL=http://192.168.0.4:6080/vnc.html`
+
+这意味着：
+
+- `POST /api/sitedata/traffic` 现在默认 `collection_mode=browser`
+- 大多数调用不再需要手动传 `browser_cdp_url`
+- `PubSpy analyze` 在补 `top keywords` 时，也默认复用这条会话
+- 如果默认会话失效，需要让管理员立即打开 `http://192.168.0.4:6080/vnc.html` 重新登录并恢复会话
+
 ## 1. Traffic API
 
 ### Endpoint

@@ -22,18 +22,25 @@ class SiteDataTrafficCollector:
         "Chrome/130.0.0.0 Safari/537.36"
     )
     SIGN_SALT = "2@3&^8d4$%H9,M"
+    _anon_client_id_cache: str | None = None
 
     def __init__(self, timeout_seconds: int = 30, proxy: str | None = None):
         self.timeout_seconds = timeout_seconds
         self.proxy = proxy
 
-    def fetch(self, domain: str) -> dict[str, Any]:
+    def fetch(
+        self,
+        domain: str,
+        *,
+        client_id: str | None = None,
+        cf_token: str | None = None,
+    ) -> dict[str, Any]:
         normalized_domain = self._normalize_domain(domain)
         errors: list[SiteDataTrafficCollectorError] = []
 
         for candidate_domain in self._candidate_domains(normalized_domain):
             try:
-                payload = self._request_once(candidate_domain)
+                payload = self._request_once(candidate_domain, client_id=client_id, cf_token=cf_token)
                 payload["requested_domain"] = normalized_domain
                 payload["resolved_domain"] = candidate_domain
                 return payload
@@ -46,8 +53,8 @@ class SiteDataTrafficCollector:
             raise errors[-1]
         raise SiteDataTrafficCollectorError("unknown_error", "SiteData request failed without a specific error.")
 
-    def _request_once(self, domain: str) -> dict[str, Any]:
-        params = self._build_signed_params(domain)
+    def _request_once(self, domain: str, *, client_id: str | None = None, cf_token: str | None = None) -> dict[str, Any]:
+        params = self._build_signed_params(domain, client_id=client_id, cf_token=cf_token)
         command = [
             "curl",
             "-sS",
@@ -98,17 +105,26 @@ class SiteDataTrafficCollector:
             raise SiteDataTrafficCollectorError("upstream_error", error_message)
         raise SiteDataTrafficCollectorError("invalid_request", error_message)
 
-    def _build_signed_params(self, domain: str) -> dict[str, str]:
-        client_id = self._generate_client_id()
+    def _build_signed_params(
+        self,
+        domain: str,
+        *,
+        client_id: str | None = None,
+        cf_token: str | None = None,
+    ) -> dict[str, str]:
+        resolved_client_id = client_id or self._get_or_create_client_id()
         timestamp = str(int(time.time() * 1000))
-        sign = hashlib.sha256(f"{client_id}{timestamp}{self.SIGN_SALT}".encode()).hexdigest()[:32]
-        return {
+        sign = hashlib.sha256(f"{resolved_client_id}{timestamp}{self.SIGN_SALT}".encode()).hexdigest()[:32]
+        params = {
             "domain": domain,
             "source": "web",
-            "clientId": client_id,
+            "clientId": resolved_client_id,
             "timestamp": timestamp,
             "sign": sign,
         }
+        if cf_token:
+            params["cf_token"] = cf_token
+        return params
 
     @staticmethod
     def _parse_curl_output(stdout: str) -> tuple[str, int]:
@@ -124,9 +140,19 @@ class SiteDataTrafficCollector:
 
     @staticmethod
     def _generate_client_id() -> str:
+        # Match the SiteData frontend clientId format:
+        # anon_<timestamp>_<13 base36 chars>
         alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-        suffix = "".join(random.choice(alphabet) for _ in range(12))
+        suffix = "".join(random.choice(alphabet) for _ in range(13))
         return f"anon_{int(time.time() * 1000)}_{suffix}"
+
+    @classmethod
+    def _get_or_create_client_id(cls) -> str:
+        # SiteData stores anonClientId in localStorage and reuses it across requests.
+        # Reusing a stable value keeps our direct collector closer to the frontend flow.
+        if not cls._anon_client_id_cache:
+            cls._anon_client_id_cache = cls._generate_client_id()
+        return cls._anon_client_id_cache
 
     @staticmethod
     def _normalize_domain(raw_domain: str) -> str:

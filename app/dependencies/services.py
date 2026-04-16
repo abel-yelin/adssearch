@@ -2,6 +2,7 @@ from app.core.config import get_settings
 from app.services.ads_task_service import AdsTaskService
 from app.services.domain_recommendation_service import DomainRecommendationService
 from app.services.free_trends_service import FreeTrendsApiService
+from app.services.pubspy_service import PubSpyService
 from app.services.queue_service import TaskQueueService
 from app.services.search_service import SearchService
 from app.services.sitedata_service import SiteDataTrafficService
@@ -50,3 +51,8 @@ def get_domain_recommendation_service() -> DomainRecommendationService:
 
 def get_whois_service() -> WhoisService:
     return WhoisService(get_settings())
+
+
+def get_pubspy_service() -> PubSpyService:
+    settings = get_settings()
+    return PubSpyService(settings=settings, whois_service=WhoisService(settings))

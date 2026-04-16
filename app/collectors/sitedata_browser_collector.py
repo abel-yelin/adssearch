@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
+from playwright._impl._errors import Error as PlaywrightError
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector, SiteDataTrafficCollectorError
@@ -85,7 +86,7 @@ class SiteDataBrowserCollector:
                 launch_kwargs["executable_path"] = self.browser_executable_path
             elif self.browser_channel:
                 launch_kwargs["channel"] = self.browser_channel
-            self._browser = await self._playwright.chromium.launch(**launch_kwargs)
+            self._browser = await self._launch_browser_with_fallback(launch_kwargs)
             self._context = await self._browser.new_context(viewport={"width": 1440, "height": 900}, locale="en-US")
             self._owns_browser = True
             self._owns_context = True
@@ -99,6 +100,18 @@ class SiteDataBrowserCollector:
         self._page.on("response", lambda response: asyncio.create_task(self._on_response(response)))
         self._page.on("console", lambda msg: self._console_logs.append({"type": msg.type, "text": msg.text}))
         self._page.on("pageerror", lambda exc: self._page_errors.append(str(exc)))
+
+    async def _launch_browser_with_fallback(self, launch_kwargs: dict[str, Any]) -> Browser:
+        try:
+            return await self._playwright.chromium.launch(**launch_kwargs)
+        except PlaywrightError as exc:
+            if (
+                launch_kwargs.get("channel") == "chrome"
+                and "Chromium distribution 'chrome' is not found" in str(exc)
+            ):
+                fallback_kwargs = {key: value for key, value in launch_kwargs.items() if key != "channel"}
+                return await self._playwright.chromium.launch(**fallback_kwargs)
+            raise
 
     async def close(self) -> None:
         if self._owns_context and self._context is not None:
@@ -116,9 +129,7 @@ class SiteDataBrowserCollector:
         self._console_logs = []
         self._page_errors = []
         normalized_domain = SiteDataTrafficCollector._normalize_domain(domain)
-        url = f"https://sitedata.dev/traffic/{normalized_domain}"
-
-        await self._page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._goto_sitedata_page(normalized_domain)
         await self._page.wait_for_timeout(pre_click_wait_ms)
 
         storage_before = await self._read_storage()
@@ -158,9 +169,7 @@ class SiteDataBrowserCollector:
         self._console_logs = []
         self._page_errors = []
         normalized_domain = SiteDataTrafficCollector._normalize_domain(probe_domain)
-        url = f"https://sitedata.dev/traffic/{normalized_domain}"
-
-        await self._page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        await self._goto_sitedata_page(normalized_domain)
         await self._page.wait_for_timeout(pre_click_wait_ms)
         storage_before = await self._read_storage()
 
@@ -195,6 +204,36 @@ class SiteDataBrowserCollector:
             "request_count": len(self._requests),
             "recent_console": [self._sanitize_console_text(item["text"]) for item in self._console_logs[-8:]],
         }
+
+    async def read_session_tokens(self, domain: str, *, pre_wait_ms: int = 1500) -> dict[str, Any]:
+        if self._page is None:
+            raise SiteDataTrafficCollectorError("collector_not_started", "Browser collector has not been started.")
+
+        normalized_domain = SiteDataTrafficCollector._normalize_domain(domain)
+        await self._goto_sitedata_page(normalized_domain)
+        await self._page.wait_for_timeout(pre_wait_ms)
+        storage = await self._read_storage()
+        return {
+            "probe_domain": normalized_domain,
+            "current_url": storage.get("href"),
+            "user_info": storage.get("userInfo"),
+            "anon_client_id": storage.get("anonClientId"),
+            "cf_token": storage.get("cfToken"),
+            "has_user_info": bool(storage.get("userInfo")),
+            "has_anon_client_id": bool(storage.get("anonClientId")),
+            "has_cf_token": bool(storage.get("cfToken")),
+        }
+
+    async def _goto_sitedata_page(self, domain: str) -> None:
+        if self._page is None:
+            raise SiteDataTrafficCollectorError("collector_not_started", "Browser collector has not been started.")
+
+        url = f"https://sitedata.dev/traffic/{domain}"
+        try:
+            await self._page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        except PlaywrightError as exc:
+            if "net::ERR_ABORTED" not in str(exc):
+                raise
 
     async def _read_storage(self) -> dict[str, Any]:
         if self._page is None:

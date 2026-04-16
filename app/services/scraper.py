@@ -625,7 +625,7 @@ class GoogleAdsTransparencyScraper:
     async def search_domain(self, domain: str) -> ScrapeResult:
         normalized_query_domain = self._normalize_domain(domain) or domain.lower()
         result = ScrapeResult(query_domain=normalized_query_domain)
-        search_url = f"{self.BASE_URL}/?region={self.region}&domain={quote(domain)}"
+        search_url = f"{self.BASE_URL}/?region={self.region}&domain={quote(normalized_query_domain)}"
         self._intercepted_responses.clear()
 
         try:

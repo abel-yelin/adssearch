@@ -1,8 +1,12 @@
 import asyncio
 import subprocess
-from unittest.mock import AsyncMock, patch
+import re
+from unittest.mock import AsyncMock, Mock, patch
+
+from playwright._impl._errors import Error as PlaywrightError
 
 from app.collectors.sitedata_traffic_collector import SiteDataTrafficCollector, SiteDataTrafficCollectorError
+from app.collectors.sitedata_browser_collector import SiteDataBrowserCollector
 from app.dependencies.services import get_sitedata_service
 from app.schemas.sitedata import SiteDataBrowserHealthResponse, SiteDataTrafficRequest, SiteDataTrafficResponse
 from app.services.sitedata_service import SiteDataTrafficService
@@ -60,6 +64,37 @@ def test_sitedata_collector_raises_for_invalid_domain():
         assert exc.code == "invalid_domain"
     else:
         raise AssertionError("Expected invalid_domain error")
+
+
+def test_sitedata_collector_generates_browser_compatible_client_id():
+    client_id = SiteDataTrafficCollector._generate_client_id()
+
+    assert re.fullmatch(r"anon_\d{13}_[a-z0-9]{13}", client_id)
+
+
+def test_sitedata_collector_reuses_cached_client_id_within_process():
+    SiteDataTrafficCollector._anon_client_id_cache = None
+    try:
+        first = SiteDataTrafficCollector._get_or_create_client_id()
+        second = SiteDataTrafficCollector._get_or_create_client_id()
+    finally:
+        SiteDataTrafficCollector._anon_client_id_cache = None
+
+    assert first == second
+
+
+def test_sitedata_collector_build_signed_params_supports_explicit_client_and_cf_token():
+    collector = SiteDataTrafficCollector()
+    params = collector._build_signed_params(
+        "image2url.com",
+        client_id="anon_1776359491454_7618266557315",
+        cf_token="cf-demo-token",
+    )
+
+    assert params["clientId"] == "anon_1776359491454_7618266557315"
+    assert params["cf_token"] == "cf-demo-token"
+    assert params["domain"] == "image2url.com"
+    assert len(params["sign"]) == 32
 
 
 class FakeSiteDataService:
@@ -150,6 +185,97 @@ def test_sitedata_service_supports_browser_collector():
     assert response.monthly_visits[-1].visits == 679000
 
 
+def test_sitedata_service_can_sync_browser_tokens_for_direct_mode():
+    payload = {
+        "requested_domain": "image2url.com",
+        "resolved_domain": "image2url.com",
+        "SiteName": "image2url.com",
+        "EstimatedMonthlyVisits": {"2026-03-01": 679000},
+        "TrafficSources": {"Search": 0.534},
+        "TopKeywords": [{"Name": "image to url", "Volume": 1000, "Cpc": 0.2, "EstimatedValue": 500}],
+        "TopCountryShares": [{"CountryCode": "US", "Value": 0.309}],
+        "Engagments": {"Visits": "679000"},
+    }
+
+    with patch("app.services.sitedata_service.SiteDataBrowserCollector") as browser_cls, patch(
+        "app.services.sitedata_service.SiteDataTrafficCollector"
+    ) as direct_cls:
+        browser = browser_cls.return_value
+        browser.start = AsyncMock()
+        browser.read_session_tokens = AsyncMock(
+            return_value={
+                "probe_domain": "image2url.com",
+                "anon_client_id": "anon_1776359491454_7618266557315",
+                "cf_token": "cf-demo-token",
+            }
+        )
+        browser.close = AsyncMock()
+
+        direct = direct_cls.return_value
+        direct.fetch.return_value = payload
+
+        response = asyncio.run(
+            SiteDataTrafficService().fetch_traffic(
+                SiteDataTrafficRequest(
+                    domain="image2url.com",
+                    collection_mode="direct",
+                    sync_cf_token_from_browser=True,
+                    browser_mode="cdp",
+                    browser_cdp_url="http://127.0.0.1:9222",
+                )
+            )
+        )
+
+    browser.start.assert_awaited_once()
+    browser.read_session_tokens.assert_awaited_once()
+    browser.close.assert_awaited_once()
+    direct.fetch.assert_called_once_with(
+        "image2url.com",
+        client_id="anon_1776359491454_7618266557315",
+        cf_token="cf-demo-token",
+    )
+    assert response.resolved_domain == "image2url.com"
+    assert response.top_keywords[0].keyword == "image to url"
+
+
+def test_sitedata_service_sync_mode_raises_verification_required_when_token_missing():
+    with patch("app.services.sitedata_service.SiteDataBrowserCollector") as browser_cls, patch(
+        "app.services.sitedata_service.SiteDataTrafficCollector"
+    ) as direct_cls:
+        browser = browser_cls.return_value
+        browser.start = AsyncMock()
+        browser.read_session_tokens = AsyncMock(
+            return_value={
+                "probe_domain": "image2url.com",
+                "anon_client_id": "anon_1776359491454_7618266557315",
+                "cf_token": None,
+                "has_cf_token": False,
+            }
+        )
+        browser.close = AsyncMock()
+
+        direct = direct_cls.return_value
+        direct.fetch.side_effect = SiteDataTrafficCollectorError("unauthorized_client", "Unauthorized clientId")
+
+        try:
+            asyncio.run(
+                SiteDataTrafficService().fetch_traffic(
+                    SiteDataTrafficRequest(
+                        domain="image2url.com",
+                        collection_mode="direct",
+                        sync_cf_token_from_browser=True,
+                        browser_mode="cdp",
+                        browser_cdp_url="http://127.0.0.1:9222",
+                    )
+                )
+            )
+        except SiteDataTrafficCollectorError as exc:
+            assert exc.code == "verification_required"
+            assert "cf_token" in exc.message
+        else:
+            raise AssertionError("Expected verification_required when sync mode has no usable cf_token")
+
+
 def test_sitedata_traffic_endpoint(client):
     from app.main import app
 
@@ -231,3 +357,42 @@ def test_sitedata_service_browser_health_supports_verified_session():
     assert response.status == "healthy"
     assert response.last_browser_collection_usable is True
     assert response.requires_manual_login is False
+
+
+def test_sitedata_browser_collector_check_health_tolerates_err_aborted():
+    collector = SiteDataBrowserCollector(browser_mode="cdp", browser_cdp_url="http://127.0.0.1:9222")
+    collector._page = Mock()
+    collector._page.goto = AsyncMock(
+        side_effect=PlaywrightError(
+        'Page.goto: net::ERR_ABORTED at https://sitedata.dev/traffic/image2url.com'
+        )
+    )
+    collector._page.wait_for_timeout = AsyncMock()
+    analyze_button = AsyncMock()
+    analyze_button.click = AsyncMock()
+    collector._page.get_by_role.return_value = analyze_button
+    collector._read_storage = AsyncMock(
+        side_effect=[
+            {
+                "href": "https://sitedata.dev/traffic/image2url.com",
+                "localKeys": ["anonClientId", "userInfo", "cf_token"],
+                "userInfo": '{"email":"test@example.com"}',
+                "anonClientId": "anon_demo",
+                "cfToken": "cf_demo",
+            },
+            {
+                "href": "https://sitedata.dev/traffic/image2url.com",
+                "localKeys": ["anonClientId", "userInfo", "cf_token"],
+                "userInfo": '{"email":"test@example.com"}',
+                "anonClientId": "anon_demo",
+                "cfToken": "cf_demo",
+            },
+        ]
+    )
+    collector._extract_latest_payload = lambda: {"SiteName": "image2url.com"}
+
+    payload = asyncio.run(collector.check_health("image2url.com"))
+
+    assert payload["has_cf_token"] is True
+    assert payload["last_browser_collection_usable"] is True
+    collector._page.get_by_role.assert_called_once_with("button", name="Analyze")

@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 
 from app.services.whois_service import WhoisService, parse_whois_data
 
@@ -63,4 +64,22 @@ def test_whois_service_returns_error_for_unparseable_failures():
 
     assert results[0].domain == "broken.com"
     assert results[0].available is False
+    assert results[0].error is True
+
+
+def test_whois_service_timeout_does_not_block_until_lookup_finishes():
+    class SlowWhoisClient:
+        def lookup(self, domain: str):
+            time.sleep(0.2)
+            return {"registrar": "Too Slow"}
+
+    service = WhoisService(lookup_client=SlowWhoisClient())
+    service.timeout_seconds = 0.01
+
+    start = time.monotonic()
+    results = service.check_domains(["slow.com"])
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.15
+    assert results[0].domain == "slow.com"
     assert results[0].error is True

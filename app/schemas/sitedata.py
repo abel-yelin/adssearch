@@ -6,9 +6,15 @@ from pydantic import BaseModel, Field
 class SiteDataTrafficRequest(BaseModel):
     domain: str = Field(..., min_length=1, description="Domain to analyze on SiteData.")
     collection_mode: Literal["direct", "browser"] = Field(
-        default="direct",
+        default="browser",
         description="Use direct API signing or a real browser session.",
     )
+    sync_cf_token_from_browser: bool = Field(
+        default=False,
+        description="For direct mode, load cf_token and anonClientId from a configured browser session first.",
+    )
+    client_id: str | None = Field(default=None, description="Optional explicit SiteData clientId override.")
+    cf_token: str | None = Field(default=None, description="Optional explicit SiteData cf_token override.")
     proxy: str | None = Field(default=None, description="Optional proxy passed to curl.")
     timeout_seconds: int = Field(default=30, ge=5, le=120, description="Request timeout in seconds.")
     browser_mode: Literal["isolated", "cdp", "persistent"] | None = Field(
