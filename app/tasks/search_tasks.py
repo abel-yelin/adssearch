@@ -5,6 +5,7 @@ from rq import get_current_job
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_db_session
+from app.models.statuses import SearchTaskStatus
 from app.schemas.search import SearchRequest
 from app.repositories.task_repository import TaskRepository
 from app.services.search_service import SearchService
@@ -22,7 +23,7 @@ def run_search_task(payload: dict) -> dict:
     logger.info("Worker executing search task for domain=%s", request.domain)
     if task_id:
         with get_db_session() as session:
-            TaskRepository(session).update_status(task_id, status="started", started=True)
+            TaskRepository(session).update_status(task_id, status=SearchTaskStatus.RUNNING.value, started=True)
 
     result = asyncio.run(SearchService().run_search(request, settings, task_id=task_id))
 
@@ -32,7 +33,7 @@ def run_search_task(payload: dict) -> dict:
             if result.get("success"):
                 repo.update_status(
                     task_id,
-                    status="finished",
+                    status=SearchTaskStatus.COMPLETED.value,
                     result_payload=result,
                     error_message=None,
                     finished=True,
@@ -40,7 +41,7 @@ def run_search_task(payload: dict) -> dict:
             else:
                 repo.update_status(
                     task_id,
-                    status="failed",
+                    status=SearchTaskStatus.FAILED.value,
                     result_payload=result,
                     error_message=result.get("error"),
                     finished=True,

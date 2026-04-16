@@ -7,7 +7,7 @@ class FakeTaskService:
         return SearchTaskSubmitResponse(
             success=True,
             task_id="task-1234",
-            status="queued",
+            status="pending",
             message="Search task submitted successfully.",
         )
 
@@ -15,7 +15,7 @@ class FakeTaskService:
         return SearchTaskStatusResponse(
             success=True,
             task_id=task_id,
-            status="finished",
+            status="completed",
             result={
                 "success": True,
                 "task_id": "worker-1234",
@@ -37,7 +37,7 @@ class FakeTaskService:
         return TaskActionResponse(
             success=True,
             task_id=task_id,
-            status="canceled",
+            status="cancelled",
             message="Task canceled successfully.",
         )
 
@@ -46,7 +46,7 @@ class FakeTaskService:
             success=True,
             task_id=task_id,
             new_task_id="task-5678",
-            status="queued",
+            status="pending",
             message="Task retried successfully.",
         )
 
@@ -72,7 +72,7 @@ def test_search_endpoint(client):
     payload = response.json()
     assert payload["success"] is True
     assert payload["task_id"] == "task-1234"
-    assert payload["status"] == "queued"
+    assert payload["status"] == "pending"
 
 
 def test_task_status_endpoint(client):
@@ -88,7 +88,7 @@ def test_task_status_endpoint(client):
     payload = response.json()
     assert payload["success"] is True
     assert payload["task_id"] == "task-1234"
-    assert payload["status"] == "finished"
+    assert payload["status"] == "completed"
     assert payload["result"]["data"]["query_domain"] == "example.com"
     assert payload["retries_left"] == 1
 
@@ -105,7 +105,7 @@ def test_cancel_task_endpoint(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
-    assert payload["status"] == "canceled"
+    assert payload["status"] == "cancelled"
 
 
 def test_retry_task_endpoint(client):
@@ -120,5 +120,5 @@ def test_retry_task_endpoint(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
-    assert payload["status"] == "queued"
+    assert payload["status"] == "pending"
     assert payload["new_task_id"] == "task-5678"

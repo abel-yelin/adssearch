@@ -1,12 +1,9 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-
-SitemapMonitorStatus = Literal["idle", "queued", "running", "completed", "failed", "paused"]
-SitemapRunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
-TriggerMode = Literal["manual", "scheduled"]
+from app.models.statuses import SitemapMonitorStatus, SitemapRunStatus, SitemapTriggerMode
 
 
 class SitemapMonitorCreateRequest(BaseModel):
@@ -34,7 +31,7 @@ class SitemapRunDispatchResponse(BaseModel):
     monitor_id: str
     run_id: str
     status: SitemapRunStatus
-    trigger_mode: TriggerMode
+    trigger_mode: SitemapTriggerMode
     message: str
 
 
@@ -54,7 +51,7 @@ class SitemapLastmodChange(BaseModel):
 class SitemapRunResponse(BaseModel):
     run_id: str
     monitor_id: str
-    trigger_mode: TriggerMode
+    trigger_mode: SitemapTriggerMode
     status: SitemapRunStatus
     result: dict[str, Any] | None = None
     error_message: str | None = None

@@ -3,17 +3,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.models.statuses import TrendTaskStatus
+
 
 TrendTimeRange = Literal["today 12-m", "today 3-m", "today 1-m", "now 7-d"]
-TrendTaskStatus = Literal[
-    "pending",
-    "running",
-    "retrying",
-    "cooldown",
-    "completed",
-    "failed",
-    "cancelled",
-]
 KeywordStatus = Literal["queued", "running", "processed", "skipped"]
 
 
@@ -23,6 +16,7 @@ class TrendTaskCreateRequest(BaseModel):
     time_range: TrendTimeRange
     threshold: int = Field(..., ge=1)
     max_keywords: int = Field(..., ge=1, le=5000)
+    batch_size: int = Field(default=4, ge=1, le=4)
     geo: str = Field(default="", description="Google Trends geo 参数，默认全局")
     language: str = Field(default="en-US", description="Playwright 页面语言")
     timezone_offset: int = Field(default=0, description="Google Trends tz 参数，单位分钟")
@@ -35,7 +29,7 @@ class TrendTaskCreateRequest(BaseModel):
 
 class TrendTaskCreateResponse(BaseModel):
     task_id: str
-    status: Literal["pending"]
+    status: TrendTaskStatus
 
 
 class TrendTaskSummaryItem(BaseModel):
@@ -52,6 +46,7 @@ class TrendTaskStatusResponse(BaseModel):
     time_range: TrendTimeRange
     threshold: int
     max_keywords: int
+    batch_size: int
     processed_keywords_count: int
     effective_keywords_count: int
     current_batch_no: int
@@ -85,6 +80,7 @@ class TrendTaskExportResponse(BaseModel):
     time_range: TrendTimeRange
     threshold: int
     max_keywords: int
+    batch_size: int
     status: TrendTaskStatus
     effective_new_words: list[dict[str, Any]]
     processed_keywords: list[str]

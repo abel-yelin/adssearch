@@ -5,8 +5,7 @@ from datetime import UTC, datetime
 from app import models  # noqa: F401
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.db.base import Base
-from app.db.session import engine, get_db_session
+from app.db.session import get_db_session
 from app.repositories.sitemap_repository import SitemapRepository
 from app.services.queue_service import TaskQueueService
 
@@ -17,7 +16,6 @@ logger = get_logger(__name__)
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    Base.metadata.create_all(bind=engine)
     queue_service = TaskQueueService(settings)
     logger.info("Starting sitemap scheduler with poll=%ss", settings.sitemap_scheduler_poll_seconds)
 

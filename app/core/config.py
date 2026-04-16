@@ -1,7 +1,42 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+
+_ENV_LOADED = False
+
+
+def _load_dotenv_file() -> None:
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        _ENV_LOADED = True
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+    _ENV_LOADED = True
+
+
+_load_dotenv_file()
 
 
 def _get_bool_env(name: str, default: bool) -> bool:
@@ -85,6 +120,58 @@ class AppSettings(BaseModel):
     sitemap_max_files: int = Field(default_factory=lambda: _get_int_env("SITEMAP_MAX_FILES", 2000))
     sitemap_scheduler_poll_seconds: int = Field(default_factory=lambda: _get_int_env("SITEMAP_SCHEDULER_POLL_SECONDS", 30))
     sitemap_scheduler_batch_size: int = Field(default_factory=lambda: _get_int_env("SITEMAP_SCHEDULER_BATCH_SIZE", 20))
+    free_trends_config_path: str = Field(
+        default=os.getenv("FREE_TRENDS_CONFIG_PATH")
+        or str(Path(__file__).resolve().parents[2] / "config" / "free_trends_service.example.json")
+    )
+    free_trends_request_poll_seconds: int = Field(
+        default_factory=lambda: _get_int_env("FREE_TRENDS_REQUEST_POLL_SECONDS", 5)
+    )
+    domain_recommendation_ai_provider: str = Field(
+        default=os.getenv("DOMAIN_RECOMMENDATION_AI_PROVIDER", "auto")
+    )
+    domain_recommendation_ai_model: str = Field(
+        default=os.getenv("DOMAIN_RECOMMENDATION_AI_MODEL", os.getenv("REELXAI_MODEL", "gpt-4o-mini"))
+    )
+    domain_recommendation_ai_base_url: str = Field(
+        default=os.getenv(
+            "DOMAIN_RECOMMENDATION_AI_BASE_URL",
+            os.getenv("REELXAI_BASE_URL", "https://reelxai.com/v1"),
+        )
+    )
+    domain_recommendation_ai_api_key: str | None = Field(
+        default=os.getenv("DOMAIN_RECOMMENDATION_AI_API_KEY") or os.getenv("REELXAI_API_KEY")
+    )
+    domain_recommendation_reelxai_base_url: str = Field(
+        default=os.getenv("REELXAI_BASE_URL", "https://reelxai.com/v1")
+    )
+    domain_recommendation_reelxai_model: str = Field(
+        default=os.getenv("REELXAI_MODEL", "gpt-4o-mini")
+    )
+    domain_recommendation_reelxai_api_key: str | None = Field(
+        default=os.getenv("REELXAI_API_KEY")
+    )
+    domain_recommendation_replicate_base_url: str = Field(
+        default=os.getenv("REPLICATE_BASE_URL", "https://api.replicate.com/v1")
+    )
+    domain_recommendation_replicate_model: str = Field(
+        default=os.getenv("REPLICATE_DOMAIN_MODEL", "meta/meta-llama-3-8b-instruct")
+    )
+    domain_recommendation_replicate_api_token: str | None = Field(
+        default=os.getenv("REPLICATE_API_TOKEN")
+    )
+    domain_recommendation_ai_timeout_seconds: int = Field(
+        default_factory=lambda: _get_int_env("DOMAIN_RECOMMENDATION_AI_TIMEOUT_SECONDS", 30)
+    )
+    domain_recommendation_whois_timeout_seconds: int = Field(
+        default_factory=lambda: _get_int_env("DOMAIN_RECOMMENDATION_WHOIS_TIMEOUT_SECONDS", 10)
+    )
+    domain_recommendation_whois_concurrency: int = Field(
+        default_factory=lambda: _get_int_env("DOMAIN_RECOMMENDATION_WHOIS_CONCURRENCY", 5)
+    )
+    domain_recommendation_whois_cache_ttl_seconds: int = Field(
+        default_factory=lambda: _get_int_env("DOMAIN_RECOMMENDATION_WHOIS_CACHE_TTL_SECONDS", 300)
+    )
 
 
 @lru_cache(maxsize=1)

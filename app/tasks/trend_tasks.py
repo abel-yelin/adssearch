@@ -6,6 +6,7 @@ from app.collectors.trends_collector import GoogleTrendsCollector, TrendsCollect
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_db_session
+from app.models.statuses import TaskBatchStatus, TaskKeywordSourceType, TaskKeywordStatus, TrendTaskStatus
 from app.repositories.trend_task_repository import TrendTaskRepository
 from app.schemas.task import TrendTaskCreateRequest
 from app.services.keyword_service import KeywordService
@@ -47,7 +48,7 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
     queue_service = TaskQueueService(settings)
 
     with get_db_session() as session:
-        TrendTaskRepository(session).set_task_status(task_id, "running", started=True)
+        TrendTaskRepository(session).set_task_status(task_id, TrendTaskStatus.RUNNING.value, started=True)
     queue_service.set_progress(task_id, {"status": "running", "current_batch_no": 0})
 
     try:
@@ -58,22 +59,22 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                 task = repo.get_task(task_id)
                 if task is None:
                     raise RuntimeError(f"Task {task_id} no longer exists.")
-                if task.status == "cancelled":
-                    result = _build_result(repo, task_id, "cancelled")
-                    repo.set_task_status(task_id, "cancelled", result_payload=result, finished=True)
+                if task.status == TrendTaskStatus.CANCELLED.value:
+                    result = _build_result(repo, task_id, TrendTaskStatus.CANCELLED.value)
+                    repo.set_task_status(task_id, TrendTaskStatus.CANCELLED.value, result_payload=result, finished=True)
                     queue_service.set_progress(task_id, result)
                     return result
                 if task.processed_keywords_count >= task.max_keywords:
-                    result = _build_result(repo, task_id, "completed")
-                    repo.set_task_status(task_id, "completed", result_payload=result, finished=True)
+                    result = _build_result(repo, task_id, TrendTaskStatus.COMPLETED.value)
+                    repo.set_task_status(task_id, TrendTaskStatus.COMPLETED.value, result_payload=result, finished=True)
                     queue_service.set_progress(task_id, result)
                     return result
 
-                next_keywords = repo.pick_next_keywords(task_id, limit=4)
+                next_keywords = repo.pick_next_keywords(task_id, limit=task.batch_size)
                 if not next_keywords:
                     repo.refresh_task_counters(task_id)
-                    result = _build_result(repo, task_id, "completed")
-                    repo.set_task_status(task_id, "completed", result_payload=result, finished=True)
+                    result = _build_result(repo, task_id, TrendTaskStatus.COMPLETED.value)
+                    repo.set_task_status(task_id, TrendTaskStatus.COMPLETED.value, result_payload=result, finished=True)
                     queue_service.set_progress(task_id, result)
                     return result
 
@@ -114,19 +115,23 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                     break
                 except TrendsCollectorError as exc:
                     retry_count += 1
-                    retry_status = "cooldown" if exc.code == "captcha_or_blocked" and retry_count < 3 else "retrying"
+                    retry_status = (
+                        TrendTaskStatus.COOLDOWN.value
+                        if exc.code == "captcha_or_blocked" and retry_count < 3
+                        else TrendTaskStatus.RETRYING.value
+                    )
                     with get_db_session() as session:
                         repo = TrendTaskRepository(session)
                         repo.update_batch_status(
                             batch.id,
-                            retry_status if retry_count < 3 else "failed",
+                            retry_status if retry_count < 3 else TaskBatchStatus.FAILED.value,
                             retry_count=retry_count,
                             error_code=exc.code,
                             error_message=exc.message,
                         )
                         repo.set_task_status(
                             task_id,
-                            retry_status if retry_count < 3 else "failed",
+                            retry_status if retry_count < 3 else TrendTaskStatus.FAILED.value,
                             error_code=exc.code,
                             error_message=exc.message,
                             increment_retry=True,
@@ -134,8 +139,15 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                         )
                         if retry_count >= 3:
                             repo.revert_keywords_to_queue(task_id, batch_keywords)
-                            result = _build_result(repo, task_id, "failed")
-                            repo.set_task_status(task_id, "failed", error_code=exc.code, error_message=exc.message, result_payload=result, finished=True)
+                            result = _build_result(repo, task_id, TrendTaskStatus.FAILED.value)
+                            repo.set_task_status(
+                                task_id,
+                                TrendTaskStatus.FAILED.value,
+                                error_code=exc.code,
+                                error_message=exc.message,
+                                result_payload=result,
+                                finished=True,
+                            )
                             queue_service.set_progress(task_id, result)
                             return result
                     delay_seconds = (
@@ -170,16 +182,21 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                 repo.save_payload(batch.id, "related_queries", {"items": capture_result["related_queries"]})
                 repo.save_payload(batch.id, "multiline_data", capture_result["multiline_data"] or {})
                 repo.save_payload(batch.id, "raw_requests", {"items": capture_result["raw_requests"]})
+                repo.save_related_query_rows(
+                    task_id,
+                    batch.id,
+                    keyword_service.extract_related_query_rows(capture_result["related_queries"]),
+                )
 
                 related_candidates = keyword_service.extract_related_keywords(capture_result["related_queries"])
                 for candidate, source_keyword in related_candidates:
                     skip_reason = keyword_service.validate_candidate(candidate, request.base_keyword)
-                    status = "skipped" if skip_reason else "queued"
+                    status = TaskKeywordStatus.SKIPPED.value if skip_reason else TaskKeywordStatus.QUEUED.value
                     repo.add_keyword(
                         task_id=task_id,
                         keyword=normalize_keyword(candidate),
                         source_keyword=source_keyword,
-                        source_type="related",
+                        source_type=TaskKeywordSourceType.RELATED.value,
                         status=status,
                         skip_reason=skip_reason,
                     )
@@ -194,24 +211,24 @@ async def _run_trend_task(task_id: str, request: TrendTaskCreateRequest) -> dict
                     repo.add_effective_keyword(task_id, batch.id, item["keyword"], item)
 
                 repo.mark_keywords_processed(task_id, batch_keywords)
-                repo.update_batch_status(batch.id, "succeeded", retry_count=retry_count, finished=True)
+                repo.update_batch_status(batch.id, TaskBatchStatus.SUCCEEDED.value, retry_count=retry_count, finished=True)
                 repo.refresh_task_counters(task_id)
                 latest_task = repo.get_task(task_id)
                 if latest_task and latest_task.processed_keywords_count >= latest_task.max_keywords:
-                    result = _build_result(repo, task_id, "completed")
-                    repo.set_task_status(task_id, "completed", result_payload=result, finished=True)
+                    result = _build_result(repo, task_id, TrendTaskStatus.COMPLETED.value)
+                    repo.set_task_status(task_id, TrendTaskStatus.COMPLETED.value, result_payload=result, finished=True)
                     queue_service.set_progress(task_id, result)
                     return result
-                repo.set_task_status(task_id, "running")
-                queue_service.set_progress(task_id, _build_result(repo, task_id, "running"))
+                repo.set_task_status(task_id, TrendTaskStatus.RUNNING.value)
+                queue_service.set_progress(task_id, _build_result(repo, task_id, TrendTaskStatus.RUNNING.value))
     except Exception as exc:
         logger.exception("Trend task failed: task_id=%s", task_id)
         with get_db_session() as session:
             repo = TrendTaskRepository(session)
-            result = _build_result(repo, task_id, "failed")
+            result = _build_result(repo, task_id, TrendTaskStatus.FAILED.value)
             repo.set_task_status(
                 task_id,
-                "failed",
+                TrendTaskStatus.FAILED.value,
                 error_code="internal_error",
                 error_message=str(exc),
                 result_payload=result,

@@ -3,10 +3,17 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.statuses import (
+    TaskBatchStatus,
+    TaskKeywordSourceType,
+    TaskKeywordStatus,
+    TrendTaskStatus,
+)
 from app.models.batch_payload import BatchPayload
 from app.models.effective_keyword import EffectiveKeyword
 from app.models.task_batch import TaskBatch
 from app.models.task_keyword import TaskKeyword
+from app.models.trend_related_query import TrendRelatedQuery
 from app.models.trend_task import TrendTask
 
 
@@ -17,11 +24,12 @@ class TrendTaskRepository:
     def create_task(self, *, task_id: str, payload: dict) -> TrendTask:
         task = TrendTask(
             id=task_id,
-            status="pending",
+            status=TrendTaskStatus.PENDING.value,
             base_keyword=payload["base_keyword"],
             time_range=payload["time_range"],
             threshold=payload["threshold"],
             max_keywords=payload["max_keywords"],
+            batch_size=payload.get("batch_size", 4),
             geo=payload.get("geo", ""),
             language=payload.get("language", "en-US"),
             timezone_offset=payload.get("timezone_offset", 0),
@@ -75,8 +83,8 @@ class TrendTaskRepository:
                 task_id=task_id,
                 keyword=keyword,
                 source_keyword=None,
-                source_type="seed",
-                status="queued",
+                source_type=TaskKeywordSourceType.SEED.value,
+                status=TaskKeywordStatus.QUEUED.value,
             )
 
     def add_keyword(
@@ -108,14 +116,14 @@ class TrendTaskRepository:
     def pick_next_keywords(self, task_id: str, limit: int = 4) -> list[TaskKeyword]:
         stmt = (
             select(TaskKeyword)
-            .where(TaskKeyword.task_id == task_id, TaskKeyword.status == "queued")
+            .where(TaskKeyword.task_id == task_id, TaskKeyword.status == TaskKeywordStatus.QUEUED.value)
             .order_by(TaskKeyword.id.asc())
             .limit(limit)
         )
         rows = list(self.session.execute(stmt).scalars().all())
         now = datetime.now(UTC)
         for row in rows:
-            row.status = "running"
+            row.status = TaskKeywordStatus.RUNNING.value
             row.updated_at = now
             self.session.add(row)
         self.session.flush()
@@ -127,7 +135,7 @@ class TrendTaskRepository:
         rows = self.session.execute(stmt).scalars().all()
         skipped = skipped or {}
         for row in rows:
-            row.status = "skipped" if row.keyword in skipped else "processed"
+            row.status = TaskKeywordStatus.SKIPPED.value if row.keyword in skipped else TaskKeywordStatus.PROCESSED.value
             row.skip_reason = skipped.get(row.keyword)
             row.processed_at = now
             row.updated_at = now
@@ -138,12 +146,18 @@ class TrendTaskRepository:
         stmt = select(TaskKeyword).where(TaskKeyword.task_id == task_id, TaskKeyword.keyword.in_(keywords))
         rows = self.session.execute(stmt).scalars().all()
         for row in rows:
-            row.status = "queued"
+            row.status = TaskKeywordStatus.QUEUED.value
             self.session.add(row)
         self.session.flush()
 
     def create_batch(self, task_id: str, batch_no: int, keywords: list[str]) -> TaskBatch:
-        batch = TaskBatch(task_id=task_id, batch_no=batch_no, keywords=keywords, status="running", started_at=datetime.now(UTC))
+        batch = TaskBatch(
+            task_id=task_id,
+            batch_no=batch_no,
+            keywords=keywords,
+            status=TaskBatchStatus.RUNNING.value,
+            started_at=datetime.now(UTC),
+        )
         self.session.add(batch)
         self.session.flush()
         return batch
@@ -180,6 +194,20 @@ class TrendTaskRepository:
         self.session.flush()
         return payload_row
 
+    def save_related_query_rows(self, task_id: str, batch_id: str, rows: list[dict]) -> None:
+        for row in rows:
+            self.session.add(
+                TrendRelatedQuery(
+                    task_id=task_id,
+                    batch_id=batch_id,
+                    source_keyword=row["source_keyword"],
+                    query=row["query"],
+                    value_label=row["value_label"],
+                    is_breakout=bool(row["is_breakout"]),
+                )
+            )
+        self.session.flush()
+
     def add_effective_keyword(self, task_id: str, batch_id: str, keyword: str, metrics: dict) -> EffectiveKeyword | None:
         stmt = select(EffectiveKeyword).where(EffectiveKeyword.task_id == task_id, EffectiveKeyword.keyword == keyword)
         existing = self.session.execute(stmt).scalar_one_or_none()
@@ -212,7 +240,7 @@ class TrendTaskRepository:
 
         processed_stmt = select(func.count()).select_from(TaskKeyword).where(
             TaskKeyword.task_id == task_id,
-            TaskKeyword.status.in_(("processed", "skipped")),
+            TaskKeyword.status.in_((TaskKeywordStatus.PROCESSED.value, TaskKeywordStatus.SKIPPED.value)),
         )
         effective_stmt = select(func.count()).select_from(EffectiveKeyword).where(EffectiveKeyword.task_id == task_id)
         batch_stmt = select(func.max(TaskBatch.batch_no)).where(TaskBatch.task_id == task_id)

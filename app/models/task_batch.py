@@ -1,14 +1,22 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.statuses import TaskBatchStatus, enum_values
 
 
 class TaskBatch(Base):
     __tablename__ = "task_batches"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {enum_values(TaskBatchStatus)}",
+            name="ck_task_batches_status",
+        ),
+        UniqueConstraint("task_id", "batch_no", name="uq_task_batches_task_batch_no"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id: Mapped[str] = mapped_column(String(36), ForeignKey("trend_tasks.id"), index=True, nullable=False)
@@ -27,4 +35,7 @@ class TaskBatch(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
-
+    task = relationship("TrendTask", back_populates="batches")
+    payloads = relationship("BatchPayload", back_populates="batch")
+    effective_keywords = relationship("EffectiveKeyword", back_populates="batch")
+    related_queries = relationship("TrendRelatedQuery", back_populates="batch")

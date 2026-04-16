@@ -3,6 +3,7 @@ import uuid
 from rq.exceptions import InvalidJobOperation, NoSuchJobError
 
 from app.db.session import get_db_session
+from app.models.statuses import SearchTaskLookupStatus, SearchTaskStatus
 from app.repositories.task_repository import TaskRepository
 from app.schemas.search import (
     SearchRequest,
@@ -26,7 +27,7 @@ class AdsTaskService:
                 queue_job_id=task_id,
                 domain=request.domain,
                 region=request.region,
-                status="queued",
+                status=SearchTaskStatus.PENDING.value,
                 request_payload=request.model_dump(),
                 retry_count=self.queue_service.settings.queue_default_retry_count,
             )
@@ -38,7 +39,7 @@ class AdsTaskService:
         return SearchTaskSubmitResponse(
             success=True,
             task_id=task_id,
-            status="queued",
+            status=SearchTaskStatus.PENDING,
             message="Search task submitted successfully.",
         )
 
@@ -50,21 +51,16 @@ class AdsTaskService:
             return SearchTaskStatusResponse(
                 success=False,
                 task_id=task_id,
-                status="unknown",
+                status=SearchTaskLookupStatus.UNKNOWN,
                 error="Task not found.",
             )
 
-        job = self._safe_fetch_job(task_id)
-        status = task.status
+        status = SearchTaskLookupStatus(task.status)
         retries_left = task.retry_count
         result = task.result_payload
         error = task.error_message
-        if job is not None:
-            job_status = job.get_status(refresh=True)
-            if task.status in {"queued", "started"}:
-                status = job_status
         return SearchTaskStatusResponse(
-            success=status != "failed",
+            success=status != SearchTaskLookupStatus.FAILED,
             task_id=task_id,
             status=status,
             result=result,
@@ -73,95 +69,109 @@ class AdsTaskService:
         )
 
     def cancel_task(self, task_id: str) -> TaskActionResponse:
+        with get_db_session() as session:
+            repo = TaskRepository(session)
+            task = repo.get_by_task_id(task_id)
+            if task is None:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=SearchTaskLookupStatus.UNKNOWN,
+                    message="Task not found.",
+                )
+            status = SearchTaskLookupStatus(task.status)
+            if status in {
+                SearchTaskLookupStatus.COMPLETED,
+                SearchTaskLookupStatus.FAILED,
+                SearchTaskLookupStatus.CANCELLED,
+            }:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=status,
+                    message=f"Task cannot be canceled from status '{status}'.",
+                )
+            repo.update_status(task_id, status=SearchTaskStatus.CANCELLED.value, finished=True)
+
         job = self._safe_fetch_job(task_id)
         if job is None:
             return TaskActionResponse(
-                success=False,
+                success=True,
                 task_id=task_id,
-                status="unknown",
-                message="Task not found.",
+                status=SearchTaskLookupStatus.CANCELLED,
+                message="Task canceled in database; no active queue job was found.",
             )
 
-        status = job.get_status(refresh=True)
-        if status in {"finished", "failed", "canceled", "stopped"}:
-            return TaskActionResponse(
-                success=False,
-                task_id=task_id,
-                status=status,
-                message=f"Task cannot be canceled from status '{status}'.",
-            )
-
-        if status == "started":
-            self.queue_service.stop_job(task_id)
-            with get_db_session() as session:
-                TaskRepository(session).update_status(task_id, status="stopped", finished=True)
+        queue_status = self._map_queue_status(job.get_status(refresh=True))
+        if status == SearchTaskLookupStatus.RUNNING:
+            if queue_status == SearchTaskLookupStatus.RUNNING:
+                self.queue_service.stop_job(task_id)
             return TaskActionResponse(
                 success=True,
                 task_id=task_id,
-                status="stopped",
-                message="Stop signal sent to running task.",
+                status=SearchTaskLookupStatus.CANCELLED,
+                message="Cancel signal sent to running task.",
             )
 
-        job.cancel()
-        with get_db_session() as session:
-            TaskRepository(session).update_status(task_id, status="canceled", finished=True)
+        if queue_status == SearchTaskLookupStatus.PENDING:
+            job.cancel()
         return TaskActionResponse(
             success=True,
             task_id=task_id,
-            status="canceled",
+            status=SearchTaskLookupStatus.CANCELLED,
             message="Task canceled successfully.",
         )
 
     def retry_task(self, task_id: str) -> TaskActionResponse:
-        job = self._safe_fetch_job(task_id)
-        if job is None:
-            return TaskActionResponse(
-                success=False,
-                task_id=task_id,
-                status="unknown",
-                message="Task not found.",
-            )
-
-        status = job.get_status(refresh=True)
-        if status not in {"failed", "stopped", "canceled"}:
-            return TaskActionResponse(
-                success=False,
-                task_id=task_id,
-                status=status,
-                message=f"Task cannot be retried from status '{status}'.",
-            )
-
-        payload = job.meta.get("payload")
-        if not payload:
-            return TaskActionResponse(
-                success=False,
-                task_id=task_id,
-                status=status,
-                message="Task payload is missing, cannot retry.",
-            )
-
-        retries_left = int(job.meta.get("retry_count", 0))
-        if retries_left <= 0:
-            return TaskActionResponse(
-                success=False,
-                task_id=task_id,
-                status=status,
-                message="No retries left for this task.",
-            )
-
-        new_task_id = str(uuid.uuid4())
         with get_db_session() as session:
-            original_repo = TaskRepository(session)
-            original_repo.update_status(task_id, status=status, retry_count=retries_left - 1)
-            original_repo.create_task(
+            repo = TaskRepository(session)
+            task = repo.get_by_task_id(task_id)
+            if task is None:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=SearchTaskLookupStatus.UNKNOWN,
+                    message="Task not found.",
+                )
+
+            status = SearchTaskLookupStatus(task.status)
+            if status not in {SearchTaskLookupStatus.FAILED, SearchTaskLookupStatus.CANCELLED}:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=status,
+                    message=f"Task cannot be retried from status '{status}'.",
+                )
+
+            payload = task.request_payload
+            retries_left = int(task.retry_count or 0)
+            if not payload:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=status,
+                    message="Task payload is missing, cannot retry.",
+                )
+            if retries_left <= 0:
+                return TaskActionResponse(
+                    success=False,
+                    task_id=task_id,
+                    status=status,
+                    message="No retries left for this task.",
+                )
+
+            new_task_id = str(uuid.uuid4())
+            repo.update_status(task_id, status=status.value, retry_count=retries_left - 1)
+            repo.create_task(
                 task_id=new_task_id,
                 queue_job_id=new_task_id,
                 domain=payload["domain"],
                 region=payload["region"],
-                status="queued",
+                status=SearchTaskStatus.PENDING.value,
                 request_payload=payload,
                 retry_count=retries_left - 1,
             )
+
         new_job = self.queue_service.enqueue(
             "app.tasks.search_tasks.run_search_task",
             payload,
@@ -173,7 +183,7 @@ class AdsTaskService:
             success=True,
             task_id=task_id,
             new_task_id=new_task_id,
-            status="queued",
+            status=SearchTaskLookupStatus.PENDING,
             message="Task retried successfully.",
         )
 
@@ -182,3 +192,17 @@ class AdsTaskService:
             return self.queue_service.fetch_job(task_id)
         except (NoSuchJobError, InvalidJobOperation):
             return None
+
+    def _map_queue_status(self, status: str) -> SearchTaskLookupStatus:
+        mapping = {
+            "queued": SearchTaskLookupStatus.PENDING,
+            "scheduled": SearchTaskLookupStatus.PENDING,
+            "deferred": SearchTaskLookupStatus.PENDING,
+            "started": SearchTaskLookupStatus.RUNNING,
+            "finished": SearchTaskLookupStatus.COMPLETED,
+            "failed": SearchTaskLookupStatus.FAILED,
+            "stopped": SearchTaskLookupStatus.CANCELLED,
+            "canceled": SearchTaskLookupStatus.CANCELLED,
+            "cancelled": SearchTaskLookupStatus.CANCELLED,
+        }
+        return mapping.get(status, SearchTaskLookupStatus.UNKNOWN)

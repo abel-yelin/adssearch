@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from app.core.config import AppSettings
 from app.db.session import get_db_session
+from app.models.statuses import SitemapRunStatus, SitemapTriggerMode
 from app.repositories.sitemap_repository import SitemapRepository
 from app.schemas.sitemap import (
     SitemapMonitorCreateRequest,
@@ -60,7 +61,7 @@ class SitemapService:
             raise ValueError(f"Monitor '{monitor_id}' not found.")
         return self._to_monitor_response(monitor, latest_run)
 
-    def dispatch_run(self, monitor_id: str, trigger_mode: str = "manual") -> SitemapRunDispatchResponse:
+    def dispatch_run(self, monitor_id: str, trigger_mode: str = SitemapTriggerMode.MANUAL.value) -> SitemapRunDispatchResponse:
         run_id = str(uuid.uuid4())
         with get_db_session() as session:
             repo = SitemapRepository(session)
@@ -79,7 +80,7 @@ class SitemapService:
         return SitemapRunDispatchResponse(
             monitor_id=monitor_id,
             run_id=run_id,
-            status="pending",
+            status=SitemapRunStatus.PENDING,
             trigger_mode=trigger_mode,
             message="Sitemap monitor task queued successfully.",
         )
@@ -125,9 +126,14 @@ class SitemapService:
                 raise ValueError(f"Monitor '{monitor_id}' not found.")
             if run is None:
                 raise ValueError(f"Run '{run_id}' not found.")
-            repo.set_run_status(run_id, "running", started=True)
+            repo.set_run_status(run_id, SitemapRunStatus.RUNNING.value, started=True)
             repo.mark_monitor_running(monitor_id)
-            previous_snapshot = monitor.last_snapshot
+            latest_successful_run = repo.get_latest_successful_run(monitor_id)
+            previous_snapshot = (
+                latest_successful_run.snapshot_payload
+                if latest_successful_run and latest_successful_run.snapshot_payload is not None
+                else monitor.last_snapshot
+            )
             sitemap_url = monitor.sitemap_url
             site_url = monitor.site_url
 
@@ -140,14 +146,20 @@ class SitemapService:
 
         with get_db_session() as session:
             repo = SitemapRepository(session)
-            repo.set_run_status(run_id, "completed", result_payload=result, finished=True)
+            repo.set_run_status(
+                run_id,
+                SitemapRunStatus.COMPLETED.value,
+                result_payload=result,
+                snapshot_payload=snapshot,
+                finished=True,
+            )
             repo.finalize_monitor_success(monitor_id, snapshot=snapshot, result=result)
         return result
 
     def fail_run(self, monitor_id: str, run_id: str, error_message: str) -> None:
         with get_db_session() as session:
             repo = SitemapRepository(session)
-            repo.set_run_status(run_id, "failed", error_message=error_message, finished=True)
+            repo.set_run_status(run_id, SitemapRunStatus.FAILED.value, error_message=error_message, finished=True)
             repo.finalize_monitor_failure(monitor_id, error_message)
 
     def _build_run_result(

@@ -59,6 +59,7 @@ class TaskRepository:
         task.updated_at = now
         if result_payload is not None:
             task.result_payload = result_payload
+            self._apply_result_projection(task, result_payload)
         if error_message is not _UNSET:
             task.error_message = error_message
         if retry_count is not None:
@@ -70,3 +71,13 @@ class TaskRepository:
         self.session.add(task)
         self.session.flush()
         return task
+
+    @staticmethod
+    def _apply_result_projection(task: SearchTask, result_payload: dict) -> None:
+        data = result_payload.get("data") if isinstance(result_payload, dict) else None
+        if not isinstance(data, dict):
+            return
+        advertisers = data.get("advertisers")
+        task.has_ads = bool(data.get("has_ads")) if data.get("has_ads") is not None else None
+        task.total_ads_found = int(data.get("total_ads_found")) if data.get("total_ads_found") is not None else None
+        task.advertiser_count = len(advertisers) if isinstance(advertisers, list) else None

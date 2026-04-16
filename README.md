@@ -391,6 +391,41 @@ CHROME_EXTRA_ARGS="--no-sandbox --headless=new"
 - 任务执行时会在批次之间自动随机等待，并在遇到 `captcha_or_blocked` 时进入更长冷却后再重试。
 - 真实环境建议配置稳定代理，并降低访问频率，否则很容易被 Google Trends 风控。
 
+### 免费每日扫词服务
+
+第四个核心功能是独立于 API/队列体系之外的本地常驻扫词服务，完整开发说明见：
+
+- [docs/google-trends-free-discovery.md](/home/luolink/projects/adssearch/docs/google-trends-free-discovery.md)
+- [docs/step-docs/00-index.md](/home/luolink/projects/adssearch/docs/step-docs/00-index.md)
+
+单次执行：
+
+```bash
+.venv/bin/python scripts/run_free_trends_once.py --config config/free_trends_service.example.json
+```
+
+常驻调度：
+
+```bash
+.venv/bin/python scripts/run_free_trends_service.py --config config/free_trends_service.example.json
+```
+
+### 数据库迁移
+
+主应用数据库现在使用显式迁移管理，不再在 API、worker 或 scheduler 启动时自动建表。
+
+首次初始化或升级数据库：
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+查看当前迁移版本：
+
+```bash
+.venv/bin/alembic current
+```
+
 ## Docker Compose
 
 ```bash

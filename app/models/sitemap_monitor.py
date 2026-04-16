@@ -1,14 +1,23 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.statuses import SitemapMonitorStatus, enum_values
 
 
 class SitemapMonitor(Base):
     __tablename__ = "sitemap_monitors"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {enum_values(SitemapMonitorStatus)}",
+            name="ck_sitemap_monitors_status",
+        ),
+        CheckConstraint("interval_minutes > 0", name="ck_sitemap_monitors_interval_positive"),
+        Index("ix_sitemap_monitors_enabled_next_check_at", "enabled", "next_check_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     site_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -30,4 +39,4 @@ class SitemapMonitor(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
-
+    runs = relationship("SitemapRun", back_populates="monitor")

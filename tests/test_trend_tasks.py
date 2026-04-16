@@ -23,6 +23,7 @@ class FakeTrendTaskService:
             time_range="today 12-m",
             threshold=20,
             max_keywords=100,
+            batch_size=4,
             processed_keywords_count=8,
             effective_keywords_count=2,
             current_batch_no=2,
@@ -57,6 +58,7 @@ class FakeTrendTaskService:
             time_range="today 12-m",
             threshold=20,
             max_keywords=100,
+            batch_size=4,
             status="completed",
             effective_new_words=[
                 {

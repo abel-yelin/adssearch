@@ -1,11 +1,14 @@
 from app.core.config import get_settings
 from app.services.ads_task_service import AdsTaskService
+from app.services.domain_recommendation_service import DomainRecommendationService
+from app.services.free_trends_service import FreeTrendsApiService
 from app.services.queue_service import TaskQueueService
 from app.services.search_service import SearchService
 from app.services.sitedata_service import SiteDataTrafficService
 from app.services.sitemap_service import SitemapService
 from app.services.task_service import TaskService
 from app.services.trend_discovery_service import TrendDiscoveryService
+from app.services.whois_service import WhoisService
 
 
 def get_search_service() -> SearchService:
@@ -35,3 +38,15 @@ def get_sitemap_service() -> SitemapService:
 
 def get_sitedata_service() -> SiteDataTrafficService:
     return SiteDataTrafficService()
+
+
+def get_free_trends_service() -> FreeTrendsApiService:
+    return FreeTrendsApiService(get_settings())
+
+
+def get_domain_recommendation_service() -> DomainRecommendationService:
+    return DomainRecommendationService(get_settings())
+
+
+def get_whois_service() -> WhoisService:
+    return WhoisService(get_settings())

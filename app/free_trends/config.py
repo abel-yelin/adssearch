@@ -31,6 +31,7 @@ class FreeTrendsConfig:
     browser_executable_path: str | None = None
     browser_user_data_dir: str = "./free_trends_output/browser-profile"
     request_timeout_ms: int = 45000
+    request_poll_seconds: int = 5
 
     @property
     def schedule_hour(self) -> int:

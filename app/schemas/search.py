@@ -1,19 +1,8 @@
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-
-TaskStatus = Literal[
-    "queued",
-    "started",
-    "finished",
-    "failed",
-    "deferred",
-    "scheduled",
-    "stopped",
-    "canceled",
-    "unknown",
-]
+from app.models.statuses import SearchTaskLookupStatus, SearchTaskStatus
 
 
 class SearchRequest(BaseModel):
@@ -27,14 +16,14 @@ class SearchRequest(BaseModel):
 class SearchTaskSubmitResponse(BaseModel):
     success: bool
     task_id: str
-    status: Literal["queued"]
+    status: SearchTaskStatus
     message: str
 
 
 class SearchTaskStatusResponse(BaseModel):
     success: bool
     task_id: str
-    status: TaskStatus
+    status: SearchTaskLookupStatus
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
     retries_left: Optional[int] = None
@@ -43,6 +32,6 @@ class SearchTaskStatusResponse(BaseModel):
 class TaskActionResponse(BaseModel):
     success: bool
     task_id: str
-    status: TaskStatus
+    status: SearchTaskLookupStatus
     message: str
     new_task_id: Optional[str] = None

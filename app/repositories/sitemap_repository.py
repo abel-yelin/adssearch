@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.statuses import SitemapMonitorStatus, SitemapRunStatus
 from app.models.sitemap_monitor import SitemapMonitor
 from app.models.sitemap_run import SitemapRun
 
@@ -19,7 +20,7 @@ class SitemapRepository:
             sitemap_url=sitemap_url,
             interval_minutes=payload["interval_minutes"],
             enabled=payload.get("enabled", True),
-            status="idle",
+            status=SitemapMonitorStatus.IDLE.value,
             request_payload=payload,
             next_check_at=now if payload.get("enabled", True) else None,
         )
@@ -51,7 +52,7 @@ class SitemapRepository:
     def has_active_run(self, monitor_id: str) -> bool:
         stmt = select(SitemapRun.id).where(
             SitemapRun.monitor_id == monitor_id,
-            SitemapRun.status.in_(("pending", "running")),
+            SitemapRun.status.in_((SitemapRunStatus.PENDING.value, SitemapRunStatus.RUNNING.value)),
         )
         return self.session.execute(stmt).first() is not None
 
@@ -60,12 +61,12 @@ class SitemapRepository:
             id=run_id,
             monitor_id=monitor_id,
             trigger_mode=trigger_mode,
-            status="pending",
+            status=SitemapRunStatus.PENDING.value,
         )
         self.session.add(run)
         monitor = self.get_monitor(monitor_id)
         if monitor is not None:
-            monitor.status = "queued"
+            monitor.status = SitemapMonitorStatus.QUEUED.value
             monitor.updated_at = datetime.now(UTC)
             self.session.add(monitor)
         self.session.flush()
@@ -84,12 +85,25 @@ class SitemapRepository:
         )
         return self.session.execute(stmt).scalar_one_or_none()
 
+    def get_latest_successful_run(self, monitor_id: str) -> SitemapRun | None:
+        stmt = (
+            select(SitemapRun)
+            .where(
+                SitemapRun.monitor_id == monitor_id,
+                SitemapRun.status == SitemapRunStatus.COMPLETED.value,
+            )
+            .order_by(SitemapRun.finished_at.desc(), SitemapRun.created_at.desc())
+            .limit(1)
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def set_run_status(
         self,
         run_id: str,
         status: str,
         *,
         result_payload: dict | None = None,
+        snapshot_payload: dict | None = None,
         error_message: str | None = None,
         started: bool = False,
         finished: bool = False,
@@ -104,6 +118,14 @@ class SitemapRepository:
         run.error_message = error_message
         if result_payload is not None:
             run.result_payload = result_payload
+            summary = (result_payload or {}).get("summary", {})
+            if isinstance(summary, dict):
+                run.new_url_count = summary.get("new_url_count")
+                run.deleted_url_count = summary.get("deleted_url_count")
+                run.lastmod_changed_count = summary.get("lastmod_changed_count")
+                run.tracked_url_count = summary.get("tracked_url_count")
+        if snapshot_payload is not None:
+            run.snapshot_payload = snapshot_payload
         if started and run.started_at is None:
             run.started_at = now
         if finished:
@@ -116,7 +138,7 @@ class SitemapRepository:
         monitor = self.get_monitor(monitor_id)
         if monitor is None:
             return None
-        monitor.status = "running"
+        monitor.status = SitemapMonitorStatus.RUNNING.value
         monitor.updated_at = datetime.now(UTC)
         self.session.add(monitor)
         self.session.flush()
@@ -127,9 +149,9 @@ class SitemapRepository:
         if monitor is None:
             return None
         now = datetime.now(UTC)
-        monitor.status = "completed"
+        monitor.status = SitemapMonitorStatus.COMPLETED.value
         monitor.latest_result = result
-        monitor.last_snapshot = snapshot
+        monitor.last_snapshot = None
         monitor.last_checked_at = now
         monitor.last_success_at = now
         monitor.last_error = None
@@ -144,7 +166,7 @@ class SitemapRepository:
         if monitor is None:
             return None
         now = datetime.now(UTC)
-        monitor.status = "failed"
+        monitor.status = SitemapMonitorStatus.FAILED.value
         monitor.last_error = error_message
         monitor.last_checked_at = now
         monitor.next_check_at = now + timedelta(minutes=monitor.interval_minutes) if monitor.enabled else None

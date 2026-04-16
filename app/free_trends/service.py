@@ -47,6 +47,12 @@ class DailyTrendsDiscoveryService:
         self.sleep_fn = sleep_fn
 
     async def run_once(self) -> dict:
+        return await self._run_once_internal(request_id=None)
+
+    async def run_once_for_request(self, request_id: str) -> dict:
+        return await self._run_once_internal(request_id=request_id)
+
+    async def _run_once_internal(self, request_id: str | None) -> dict:
         self.storage.upsert_seed_terms(self.config.root_terms)
         start_time = utcnow()
         run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
@@ -176,6 +182,14 @@ class DailyTrendsDiscoveryService:
             "output_paths": output_paths,
             "blocked_message": blocked_message,
         }
+        if request_id is not None:
+            self.storage.finish_run_request(
+                request_id,
+                status="completed" if finished_status == "completed" else finished_status,
+                finished_at=utcnow(),
+                run_id=run_id,
+                error_message=blocked_message,
+            )
         Path(self.config.status_file).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         self.logger.info("daily trends run finished run_id=%s status=%s discovered=%s", run_id, finished_status, len(discovered))
         return summary

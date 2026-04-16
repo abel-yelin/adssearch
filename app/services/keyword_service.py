@@ -9,20 +9,37 @@ class KeywordService:
         candidates: list[tuple[str, str]] = []
         for item in related_payloads:
             source_keyword = item.get("keyword") or ""
-            payload = item.get("payload") or {}
-            ranked_lists = payload.get("default", {}).get("rankedList") or payload.get("rankedList") or []
-            target_list = None
-            if len(ranked_lists) > 1 and ranked_lists[1].get("rankedKeyword"):
-                target_list = ranked_lists[1]
-            elif ranked_lists:
-                target_list = ranked_lists[0]
-            if not target_list:
-                continue
-            for entry in target_list.get("rankedKeyword") or []:
+            for entry in KeywordService._iter_ranked_keywords(item):
                 keyword = normalize_keyword((entry.get("query") or "").strip())
                 if keyword:
                     candidates.append((keyword, source_keyword))
         return candidates
+
+    @staticmethod
+    def extract_related_query_rows(related_payloads: list[dict]) -> list[dict]:
+        rows: list[dict] = []
+        for item in related_payloads:
+            source_keyword = normalize_keyword((item.get("keyword") or "").strip())
+            if not source_keyword:
+                continue
+            for entry in KeywordService._iter_ranked_keywords(item):
+                query = normalize_keyword((entry.get("query") or "").strip())
+                if not query:
+                    continue
+                raw_value = entry.get("value")
+                if isinstance(raw_value, (int, float)):
+                    value_label = f"+{int(raw_value)}%"
+                else:
+                    value_label = str(raw_value or "").strip() or "Breakout"
+                rows.append(
+                    {
+                        "source_keyword": source_keyword,
+                        "query": query,
+                        "value_label": value_label,
+                        "is_breakout": value_label.lower() == "breakout",
+                    }
+                )
+        return rows
 
     @staticmethod
     def validate_candidate(keyword: str, base_keyword: str) -> str | None:
@@ -87,3 +104,13 @@ class KeywordService:
             return int(raw)
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _iter_ranked_keywords(item: dict) -> list[dict]:
+        payload = item.get("payload") or {}
+        ranked_lists = payload.get("default", {}).get("rankedList") or payload.get("rankedList") or []
+        if len(ranked_lists) > 1 and ranked_lists[1].get("rankedKeyword"):
+            return list(ranked_lists[1].get("rankedKeyword") or [])
+        if ranked_lists:
+            return list(ranked_lists[0].get("rankedKeyword") or [])
+        return []

@@ -38,12 +38,38 @@ async def main_async(config_path: str) -> int:
     await service.collector.start()
 
     loop = asyncio.get_running_loop()
+    run_lock = asyncio.Lock()
+
+    async def execute_run(*, request_id: str | None = None):
+        async with run_lock:
+            if request_id:
+                await service.run_once_for_request(request_id)
+            else:
+                await service.run_once()
 
     async def run_job():
-        await service.run_once()
+        await execute_run()
 
     def run_job_sync():
         asyncio.run(run_job())
+
+    async def poll_run_requests() -> None:
+        while not stop_event.is_set():
+            claimed = service.storage.claim_next_pending_run_request(utcnow())
+            if claimed is not None:
+                request_id = claimed["request_id"]
+                logger.info("free trends picked pending request request_id=%s", request_id)
+                try:
+                    await execute_run(request_id=request_id)
+                except Exception as exc:
+                    logger.exception("free trends request execution failed request_id=%s", request_id)
+                    service.storage.finish_run_request(
+                        request_id,
+                        status="failed",
+                        finished_at=utcnow(),
+                        error_message=str(exc),
+                    )
+            await asyncio.sleep(max(1, config.request_poll_seconds))
 
     scheduler = build_scheduler(config, run_job_sync)
     scheduler.start()
@@ -64,9 +90,12 @@ async def main_async(config_path: str) -> int:
         except NotImplementedError:
             signal.signal(sig, lambda *_args: stop_event.set())
 
+    poller_task = asyncio.create_task(poll_run_requests())
+
     try:
         await stop_event.wait()
     finally:
+        poller_task.cancel()
         scheduler.shutdown(wait=False)
         await service.collector.close()
     return 0

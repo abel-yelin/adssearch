@@ -3,6 +3,7 @@ import uuid
 from rq.exceptions import InvalidJobOperation, NoSuchJobError
 
 from app.db.session import get_db_session
+from app.models.statuses import TrendTaskStatus
 from app.repositories.trend_task_repository import TrendTaskRepository
 from app.schemas.task import (
     TrendTaskActionResponse,
@@ -40,7 +41,7 @@ class TaskService:
             repo.create_seed_keywords(task_id, payload["seed_keywords"])
 
         self.queue_service.enqueue("app.tasks.trend_tasks.run_trend_task", payload, job_id=task_id)
-        return TrendTaskCreateResponse(task_id=task_id, status="pending")
+        return TrendTaskCreateResponse(task_id=task_id, status=TrendTaskStatus.PENDING)
 
     def get_task_status(self, task_id: str) -> TrendTaskStatusResponse:
         with get_db_session() as session:
@@ -57,6 +58,7 @@ class TaskService:
             time_range=task.time_range,
             threshold=task.threshold,
             max_keywords=task.max_keywords,
+            batch_size=task.batch_size,
             processed_keywords_count=task.processed_keywords_count,
             effective_keywords_count=task.effective_keywords_count,
             current_batch_no=task.current_batch_no,
@@ -74,6 +76,7 @@ class TaskService:
             if task is None:
                 raise ValueError(f"Task '{task_id}' not found.")
             effective_keywords = repo.list_effective_keywords(task_id, limit=10)
+            batch_no_map = {batch.id: batch.batch_no for batch in repo.list_all_batches(task_id)}
 
         return TrendTaskSummaryResponse(
             task_id=task.id,
@@ -85,7 +88,7 @@ class TaskService:
                 TrendTaskSummaryItem(
                     keyword=item.keyword,
                     score_percent=float(item.score_percent),
-                    source_batch_no=self._resolve_batch_no(task_id, item.source_batch_id),
+                    source_batch_no=batch_no_map.get(item.source_batch_id, 0),
                 )
                 for item in effective_keywords
             ],
@@ -126,6 +129,7 @@ class TaskService:
             time_range=task.time_range,
             threshold=task.threshold,
             max_keywords=task.max_keywords,
+            batch_size=task.batch_size,
             status=task.status,
             effective_new_words=[
                 {
@@ -158,9 +162,13 @@ class TaskService:
             task = repo.get_task(task_id)
             if task is None:
                 raise ValueError(f"Task '{task_id}' not found.")
-            if task.status in {"completed", "failed", "cancelled"}:
+            if task.status in {
+                TrendTaskStatus.COMPLETED.value,
+                TrendTaskStatus.FAILED.value,
+                TrendTaskStatus.CANCELLED.value,
+            }:
                 return TrendTaskActionResponse(task_id=task_id, status=task.status, message="Task is already finalized.")
-            repo.set_task_status(task_id, "cancelled", error_code=None, error_message=None, finished=True)
+            repo.set_task_status(task_id, TrendTaskStatus.CANCELLED.value, error_code=None, error_message=None, finished=True)
 
         job = self._safe_fetch_job(task_id)
         if job is not None:
@@ -170,7 +178,7 @@ class TaskService:
                     job.cancel()
                 except Exception:
                     pass
-        return TrendTaskActionResponse(task_id=task_id, status="cancelled", message="Task cancelled successfully.")
+        return TrendTaskActionResponse(task_id=task_id, status=TrendTaskStatus.CANCELLED, message="Task cancelled successfully.")
 
     def retry_task(self, task_id: str) -> TrendTaskActionResponse:
         with get_db_session() as session:
@@ -178,7 +186,7 @@ class TaskService:
             task = repo.get_task(task_id)
             if task is None:
                 raise ValueError(f"Task '{task_id}' not found.")
-            if task.status not in {"failed", "cancelled"}:
+            if task.status not in {TrendTaskStatus.FAILED.value, TrendTaskStatus.CANCELLED.value}:
                 return TrendTaskActionResponse(
                     task_id=task_id,
                     status=task.status,
@@ -196,7 +204,7 @@ class TaskService:
         return TrendTaskActionResponse(
             task_id=task_id,
             new_task_id=new_task_id,
-            status="pending",
+            status=TrendTaskStatus.PENDING,
             message="Task retried successfully.",
         )
 
@@ -205,11 +213,3 @@ class TaskService:
             return self.queue_service.fetch_job(task_id)
         except (NoSuchJobError, InvalidJobOperation):
             return None
-
-    def _resolve_batch_no(self, task_id: str, batch_id: str) -> int:
-        with get_db_session() as session:
-            batches = TrendTaskRepository(session).list_all_batches(task_id)
-        for batch in batches:
-            if batch.id == batch_id:
-                return batch.batch_no
-        return 0

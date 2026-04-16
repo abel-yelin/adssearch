@@ -1,14 +1,26 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.statuses import TaskKeywordSourceType, TaskKeywordStatus, enum_values
 
 
 class TaskKeyword(Base):
     __tablename__ = "task_keywords"
-    __table_args__ = (UniqueConstraint("task_id", "keyword", name="uq_task_keywords_task_keyword"),)
+    __table_args__ = (
+        UniqueConstraint("task_id", "keyword", name="uq_task_keywords_task_keyword"),
+        CheckConstraint(
+            f"source_type IN {enum_values(TaskKeywordSourceType)}",
+            name="ck_task_keywords_source_type",
+        ),
+        CheckConstraint(
+            f"status IN {enum_values(TaskKeywordStatus)}",
+            name="ck_task_keywords_status",
+        ),
+        Index("ix_task_keywords_task_status_id", "task_id", "status", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String(36), ForeignKey("trend_tasks.id"), index=True, nullable=False)
@@ -26,4 +38,4 @@ class TaskKeyword(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
-
+    task = relationship("TrendTask", back_populates="keywords")

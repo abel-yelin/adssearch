@@ -1,14 +1,17 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 
 class EffectiveKeyword(Base):
     __tablename__ = "effective_keywords"
-    __table_args__ = (UniqueConstraint("task_id", "keyword", name="uq_effective_keywords_task_keyword"),)
+    __table_args__ = (
+        UniqueConstraint("task_id", "keyword", name="uq_effective_keywords_task_keyword"),
+        Index("ix_effective_keywords_task_score_percent", "task_id", "score_percent"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String(36), ForeignKey("trend_tasks.id"), index=True, nullable=False)
@@ -19,3 +22,5 @@ class EffectiveKeyword(Base):
     last_five_avg: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     base_last_five_avg: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+    task = relationship("TrendTask", back_populates="effective_keywords")
+    batch = relationship("TaskBatch", back_populates="effective_keywords")
