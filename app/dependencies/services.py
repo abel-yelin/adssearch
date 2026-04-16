@@ -5,6 +5,7 @@ from app.services.search_service import SearchService
 from app.services.sitedata_service import SiteDataTrafficService
 from app.services.sitemap_service import SitemapService
 from app.services.task_service import TaskService
+from app.services.trend_discovery_service import TrendDiscoveryService
 
 
 def get_search_service() -> SearchService:
@@ -21,6 +22,10 @@ def get_ads_task_service() -> AdsTaskService:
 
 def get_trend_task_service() -> TaskService:
     return TaskService(get_queue_service())
+
+
+def get_trend_discovery_service() -> TrendDiscoveryService:
+    return TrendDiscoveryService()
 
 
 def get_sitemap_service() -> SitemapService:

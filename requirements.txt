@@ -8,3 +8,5 @@ redis==5.2.1
 rq==1.16.2
 SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
+pytrends==4.9.2
+APScheduler==3.10.4

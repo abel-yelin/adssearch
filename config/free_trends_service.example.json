@@ -1,0 +1,31 @@
+{
+  "timezone": "Asia/Shanghai",
+  "schedule_time": "09:00",
+  "geo": "US",
+  "time_range": "now 7-d",
+  "batch_size": 5,
+  "max_batches_per_run": 20,
+  "max_depth": 2,
+  "retry_limit": 3,
+  "max_consecutive_failures": 5,
+  "cooldown_hours": 24,
+  "output_dir": "./free_trends_output",
+  "database_path": "./free_trends_output/free_trends.db",
+  "status_file": "./free_trends_output/service_status.json",
+  "log_file": "./free_trends_output/service.log",
+  "browser_headless": true,
+  "browser_channel": "chrome",
+  "browser_user_data_dir": "./free_trends_output/browser-profile",
+  "root_terms": [
+    "Guide",
+    "Editor",
+    "Creator",
+    "Maker",
+    "Downloader",
+    "Scraper",
+    "Detector",
+    "Checker",
+    "Generator",
+    "Calculator"
+  ]
+}
